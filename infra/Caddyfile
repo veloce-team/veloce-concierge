@@ -15,5 +15,13 @@ www.veloce.team {
 }
 
 veloce.team {
-    respond "Veloce — AI-augmented engineering studio. Coming soon. hello@veloce.team" 200
+    handle /branding/* {
+        root * /srv
+        file_server
+        header Cache-Control "public, max-age=86400"
+    }
+
+    handle {
+        respond "Veloce — AI-augmented разработка для бизнеса. Coming soon. hello@veloce.team" 200
+    }
 }
