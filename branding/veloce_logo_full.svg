@@ -1,0 +1,5 @@
+<svg width="800" height="180" viewBox="0 0 800 180" xmlns="http://www.w3.org/2000/svg">
+<rect width="800" height="180" fill="white"/>
+<rect x="40" y="82" width="110" height="14" rx="7" fill="#F59E0B"/>
+<text x="170" y="122" font-family="Arial, sans-serif" font-size="110" font-weight="700" fill="#0B1220">veloce</text>
+</svg>
