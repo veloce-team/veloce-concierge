@@ -9,3 +9,11 @@ app.veloce.team {
 bot.veloce.team {
     respond "Veloce Bot — coming soon" 200
 }
+
+www.veloce.team {
+    redir https://veloce.team{uri} permanent
+}
+
+veloce.team {
+    respond "Veloce — AI-augmented engineering studio. Coming soon. hello@veloce.team" 200
+}
