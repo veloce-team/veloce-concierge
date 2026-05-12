@@ -1,0 +1,11 @@
+api.veloce.team {
+    respond "Veloce API — coming soon" 200
+}
+
+app.veloce.team {
+    respond "Veloce Mini App — coming soon" 200
+}
+
+bot.veloce.team {
+    respond "Veloce Bot — coming soon" 200
+}
