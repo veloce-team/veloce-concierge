@@ -1,5 +1,11 @@
 api.veloce.team {
-    respond "Veloce API — coming soon" 200
+    @bot path /webhook/tg /webhook/tg/* /health
+    handle @bot {
+        reverse_proxy concierge-bot:3000
+    }
+    handle {
+        respond "Veloce API — coming soon" 200
+    }
 }
 
 app.veloce.team {

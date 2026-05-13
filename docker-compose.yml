@@ -25,8 +25,6 @@ services:
       - "3000"
     networks:
       - veloce-net
-    depends_on:
-      - caddy
 
 volumes:
   caddy_data:
