@@ -36,12 +36,28 @@ docker compose restart caddy
 docker compose exec concierge-bot npm run set-webhook
 ```
 
+## Production deployment
+
+Боевая инфра разнесена по двум VPS:
+
+| Домены | Локация | Compose-файл |
+|---|---|---|
+| `veloce.team`, `www.veloce.team`, `api.veloce.team`, `app.veloce.team` | Moscow VPS (`85.239.61.176`) | `docker-compose.yml` + `infra/caddy/Caddyfile` |
+| `bot.veloce.team` (Telegram-бот) | Helsinki VPS (`193.29.225.31`) | `docker-compose.aeza.yml` + `infra/caddy/Caddyfile.aeza` |
+
+TG-бот вынесен в Helsinki по причине регионально-специфичной связности Telegram Bot API; остальные сервисы остаются в Москве. Окружения изолированы — у каждого свой `veloce-net` (external), общего состояния нет.
+
+Деплой на Helsinki:
+```bash
+docker compose -f docker-compose.aeza.yml up -d --build
+```
+
 ## Эндпоинты
 
 | URL | Доступ | Назначение |
 |---|---|---|
-| `https://api.veloce.team/webhook/tg` | публично | приём апдейтов от Telegram |
-| `https://api.veloce.team/health` | публично | liveness, минимальный `{status, uptime_s}` |
+| `https://bot.veloce.team/webhook/tg` | публично (Helsinki) | приём апдейтов от Telegram |
+| `https://bot.veloce.team/health` | публично (Helsinki) | liveness, минимальный `{status, uptime_s}` |
 | `concierge-bot:3000/metrics` | только внутри `veloce-net` | счётчики диалогов, лидов, outbox |
 
 ## Сеть

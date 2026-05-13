@@ -1,0 +1,9 @@
+bot.veloce.team {
+    @bot path /webhook/tg /webhook/tg/* /health
+    handle @bot {
+        reverse_proxy concierge-bot:3000
+    }
+    handle {
+        respond "Veloce Bot" 200
+    }
+}

@@ -1,0 +1,34 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: veloce-caddy-aeza
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/caddy/Caddyfile.aeza:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - veloce-net
+
+  concierge-bot:
+    build: ./bot
+    container_name: veloce-concierge-bot-aeza
+    restart: unless-stopped
+    env_file: ./bot/.env
+    volumes:
+      - ./data:/data
+    expose:
+      - "3000"
+    networks:
+      - veloce-net
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  veloce-net:
+    external: true
