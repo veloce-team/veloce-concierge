@@ -1,0 +1,37 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: veloce-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./branding:/srv/branding:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - veloce-net
+
+  concierge-bot:
+    build: ./bot
+    container_name: veloce-concierge-bot
+    restart: unless-stopped
+    env_file: ./bot/.env
+    volumes:
+      - ./data:/data
+    expose:
+      - "3000"
+    networks:
+      - veloce-net
+    depends_on:
+      - caddy
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  veloce-net:
+    external: true
