@@ -181,12 +181,17 @@ docker compose exec concierge-bot npm run set-webhook
 Подробно — в Notion-странице «🐳 Инфра-стек» (справочник). Сжато здесь:
 
 - **`apt install iptables-persistent` удаляет `ufw`** на Ubuntu 24.04 (пакеты конфликтуют). Решение — выбрать один инструмент и не менять. Для Veloce — ufw везде.
+- **`ufw allow OpenSSH` падает сразу после `apt install ufw`** — профиль `OpenSSH` ещё не зарегистрирован, `ufw status` пишет `ERROR: problem running`. Fallback — `ufw allow 22/tcp` напрямую (эквивалент). Через минуту-две профиль OpenSSH появляется и его можно тоже добавить (два правила безопасны).
 - **`tsx` в devDependencies не попадает в production-образ** при `npm ci --omit=dev`. `scripts/set-webhook.ts` работает только в dev. В проде — curl-команда (см. §5).
 - **`tsconfig` без явного `rootDir`** — TS выводит вывод под `dist/<input-path>/`. У нас `rootDir: "./src"` + `include: ["src/**/*.ts"]` — это must.
 - **bind-mount в docker сохраняет ownership хоста** — для контейнера под uid 1000 нужен `chown -R 1000:1000 ./data` на хосте.
 - **better-sqlite3 prebuild нестабилен** — в `bot/Dockerfile` добавлены npm fetch-timeouts (`NPM_CONFIG_FETCH_TIMEOUT=600000` + retry mintimeout/maxtimeout) в стадиях builder и prod-deps. Закрыто 14.05.2026.
 - **ТСПУ блокирует Telegram Bot API из дата-центров РФ** с марта 2026 — поэтому TG-бот на Aeza Хельсинки. MSS PMTU-clamp — частичный фикс, не системное решение.
-- **Windows-git и WSL-git имеют разные SSH-ключи** — все git-операции из WSL.
+- **WSL → российский VPS / WSL → GitHub SSH — иногда timeout** из российской сети (наблюдалось 14.05.2026). По умолчанию работаем из WSL, но при отказе — fallback на Windows-сторону. Подробнее — в Регламенте §1.2 «WSL vs Windows для git/SSH/docker». Кратко:
+  - Git push: Windows-git + `gh auth setup-git` (HTTPS).
+  - SSH к VPS: `C:\WINDOWS\System32\OpenSSH\ssh.exe`, ключи из `C:\Users\imbur\.ssh\`.
+  - Docker (например `caddy fmt`): docker.exe (Docker Desktop), volume mapping через `wslpath -w`.
+- **Ключи в обоих местах** — WSL `~/.ssh/` и Windows `C:\Users\imbur\.ssh\` синхронизированы. Новый ключ — сразу в оба места.
 
 ---
 
@@ -204,12 +209,12 @@ docker compose exec concierge-bot npm run set-webhook
 - `data/.gitkeep` — убрать из репо (директория создаётся compose-mount'ом с правильным uid). Требуется `git rm data/.gitkeep`.
 
 **Инфра (Moscow):**
-- Сиротские `caddy_data`/`caddy_config` volumes от standalone-caddy эпохи — `docker volume prune` через сутки после подтверждения стабильности Aeza
-- UFW удалён при `apt install iptables-persistent` — вернуть UFW, iptables-persistent больше не нужен (MSS-clamp убран)
-- Старый московский контейнер бота — fallback 24–48ч, потом `docker compose rm concierge-bot`
+- Сиротские `caddy_data`/`caddy_config` volumes от standalone-caddy эпохи — `docker volume prune` (часть B плана 14.05.2026, после ≥ 24 ч стабильности Aeza)
+- ~~UFW удалён при `apt install iptables-persistent` — вернуть UFW~~ — закрыто 14.05.2026 (часть A). UFW активен, 22/80/443 ALLOW, iptables-persistent удалён.
+- Старый московский контейнер бота — fallback (часть B плана 14.05.2026)
 
 **Инфра (оба VPS):**
-- `caddy fmt --overwrite` на обоих VPS (warning при reload)
+- ~~`caddy fmt --overwrite` на обоих VPS~~ — закрыто 14.05.2026 (часть A). Оба Caddyfile отформатированы, без warning при reload.
 
 **Битрикс24:**
 - Выяснить лимиты `crm.deal.add` в сутки на бесплатном тарифе
