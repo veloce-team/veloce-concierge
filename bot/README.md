@@ -47,13 +47,20 @@ npm start
 
 ## Регистрация webhook'а в TG
 
-После деплоя на VPS:
+Скрипт `npm run set-webhook` — **dev-only**. Он запускается через `tsx`, а `tsx` лежит в `devDependencies` и не попадает в production-образ (`npm ci --omit=dev`). В проде зовём Telegram API напрямую:
 
 ```bash
-docker compose exec concierge-bot npm run set-webhook
+# дев (локально или в контейнере dev-build):
+npm run set-webhook
+
+# production — curl (берём TG_BOT_TOKEN/TG_WEBHOOK_SECRET/PUBLIC_URL из bot/.env):
+set -a; . ./bot/.env; set +a
+curl -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/setWebhook" \
+  -d "url=${PUBLIC_URL%/}/webhook/tg" \
+  -d "secret_token=${TG_WEBHOOK_SECRET}"
 ```
 
-Скрипт читает `PUBLIC_URL` и `TG_WEBHOOK_SECRET` из env, ставит `${PUBLIC_URL}/webhook/tg`.
+Скрипт читает `PUBLIC_URL` и `TG_WEBHOOK_SECRET` из env, ставит `${PUBLIC_URL}/webhook/tg`. curl делает ровно то же.
 
 ## Эндпоинты
 

@@ -4,6 +4,10 @@ ARG NODE_VERSION=20
 FROM node:${NODE_VERSION}-bookworm-slim AS builder
 WORKDIR /app
 ENV NODE_ENV=development
+# npm fetch-timeouts — против flaky timeout'ов на prebuild-install (better-sqlite3 тянет binary из GitHub Releases)
+ENV NPM_CONFIG_FETCH_TIMEOUT=600000 \
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000
 COPY package.json package-lock.json* ./
 RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 COPY tsconfig.json ./
@@ -14,6 +18,9 @@ RUN npm run build
 FROM node:${NODE_VERSION}-bookworm-slim AS prod-deps
 WORKDIR /app
 ENV NODE_ENV=production
+ENV NPM_CONFIG_FETCH_TIMEOUT=600000 \
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000
 COPY package.json package-lock.json* ./
 RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
 

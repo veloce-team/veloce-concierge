@@ -32,8 +32,11 @@ docker compose up -d --build concierge-bot
 # рестарт Caddy при правке Caddyfile:
 docker compose restart caddy
 
-# регистрация webhook'а в TG:
-docker compose exec concierge-bot npm run set-webhook
+# регистрация webhook'а в TG (в проде — curl, см. bot/README.md «Регистрация webhook'а»):
+set -a; . ./bot/.env; set +a
+curl -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/setWebhook" \
+  -d "url=${PUBLIC_URL%/}/webhook/tg" \
+  -d "secret_token=${TG_WEBHOOK_SECRET}"
 ```
 
 ## Production deployment
