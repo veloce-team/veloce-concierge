@@ -1,29 +1,29 @@
 api.veloce.team {
-    @bot path /webhook/tg /webhook/tg/* /health
-    handle @bot {
-        reverse_proxy concierge-bot:3000
-    }
-    handle {
-        respond "Veloce API — coming soon" 200
-    }
+	@bot path /webhook/tg /webhook/tg/* /health
+	handle @bot {
+		reverse_proxy concierge-bot:3000
+	}
+	handle {
+		respond "Veloce API — coming soon" 200
+	}
 }
 
 app.veloce.team {
-    respond "Veloce Mini App — coming soon" 200
+	respond "Veloce Mini App — coming soon" 200
 }
 
 www.veloce.team {
-    redir https://veloce.team{uri} permanent
+	redir https://veloce.team{uri} permanent
 }
 
 veloce.team {
-    handle /branding/* {
-        root * /srv
-        file_server
-        header Cache-Control "public, max-age=86400"
-    }
+	handle /branding/* {
+		root * /srv
+		file_server
+		header Cache-Control "public, max-age=86400"
+	}
 
-    handle {
-        respond "Veloce — AI-augmented разработка для бизнеса. Coming soon. hello@veloce.team" 200
-    }
+	handle {
+		respond "Veloce — AI-augmented разработка для бизнеса. Coming soon. hello@veloce.team" 200
+	}
 }
