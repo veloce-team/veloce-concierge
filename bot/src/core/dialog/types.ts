@@ -20,6 +20,8 @@ export type IncomingMessage = {
   contact?: { phone: string; name?: string };
   isCommand: boolean;
   command?: string;
+  // Deep-link payload from /start <param> (TG) / эквивалент в MAX (Блок 2б).
+  startParam?: string;
 };
 
 export type ScenarioId = 'idle' | 'contact' | 'portfolio' | 'estimate';
@@ -41,6 +43,8 @@ export type DialogContext = {
   scenario: ScenarioId;
   step?: ContactStep | EstimateStep;
   data: DialogData;
+  // Резолвится при /start из start_param; используется при создании Сделки в Б24.
+  sourceId?: string;
 };
 
 export type CrmPayload = {
@@ -48,6 +52,7 @@ export type CrmPayload = {
   phone: string;
   description: string;
   chatId: string;
+  sourceId: string;
   contactId?: number;
   dealId?: number;
 };

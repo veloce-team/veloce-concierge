@@ -8,6 +8,7 @@ import type {
   SessionStore,
   SideEffect,
 } from '../../core/dialog/types.js';
+import { resolveSourceId } from '../../config/sources.js';
 import { parseTgUpdate } from './mappers.js';
 
 export type TgWebhookDeps = {
@@ -66,7 +67,15 @@ export function createTgWebhookHandler(deps: TgWebhookDeps) {
       contact: parsed.contact,
       isCommand: parsed.isCommand,
       command: parsed.command,
+      startParam: parsed.startParam,
     };
+
+    if (parsed.startParam) {
+      const { known } = resolveSourceId(parsed.startParam);
+      if (!known) {
+        log.warn({ start_param: parsed.startParam }, 'unknown start_param, using default source');
+      }
+    }
 
     const ctx = deps.sessions.load('tg', parsed.chatId);
     const start = Date.now();

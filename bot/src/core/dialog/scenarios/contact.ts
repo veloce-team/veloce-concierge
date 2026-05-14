@@ -1,3 +1,4 @@
+import { DEFAULT_SOURCE_ID } from '../../../config/sources.js';
 import {
   ASK_DESCRIPTION,
   ASK_NAME,
@@ -72,6 +73,7 @@ export function handleContact(
             phone,
             description,
             chatId: msg.chatId,
+            sourceId: ctx.sourceId ?? DEFAULT_SOURCE_ID,
           },
         },
       ],

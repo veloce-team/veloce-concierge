@@ -18,33 +18,42 @@ export function handleUpdate(
 
   // /start всегда сбрасывает state — это явное требование задания
   if (msg.isCommand && msg.command === 'start') {
-    return startScenario();
+    // /start всегда переопределяет sourceId: новый deep-link = новая атрибуция.
+    return startScenario(msg.startParam);
   }
+
+  // sourceId резолвится только при /start и затем «прилипает» к контексту
+  // до следующего /start. Все промежуточные транзиции его сохраняют.
+  const sourceId = ctx.sourceId;
+  const withSource = (r: ScenarioStepResult): ScenarioStepResult => ({
+    ...r,
+    next: { ...r.next, sourceId: r.next.sourceId ?? sourceId },
+  });
 
   const cb = msg.callbackData;
 
   if (cb === 'main:menu') {
     return {
-      next: { scenario: 'idle', data: {} },
+      next: { scenario: 'idle', data: {}, sourceId },
       outgoing: [{ text: GREETING, buttons: MAIN_MENU_BUTTONS }],
     };
   }
-  if (cb === 'main:contact') return enterContact();
-  if (cb === 'main:portfolio') return enterPortfolio();
-  if (cb === 'main:estimate') return enterEstimate();
+  if (cb === 'main:contact') return withSource(enterContact());
+  if (cb === 'main:portfolio') return withSource(enterPortfolio());
+  if (cb === 'main:estimate') return withSource(enterEstimate());
 
   if (cb?.startsWith('est:type:')) {
     const key = cb.slice('est:type:'.length);
-    return handleEstimateChoice(key);
+    return withSource(handleEstimateChoice(key));
   }
 
   if (ctx.scenario === 'contact') {
-    return handleContact(ctx, msg);
+    return withSource(handleContact(ctx, msg));
   }
 
   // idle / неизвестный ввод — мягко возвращаем меню
   return {
-    next: { scenario: 'idle', data: {} },
+    next: { scenario: 'idle', data: {}, sourceId },
     outgoing: [{ text: GREETING, buttons: MAIN_MENU_BUTTONS }],
   };
 }

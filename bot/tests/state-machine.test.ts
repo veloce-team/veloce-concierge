@@ -48,6 +48,39 @@ describe('state machine: contact happy path', () => {
     }
   });
 
+  it('/start phon → next.sourceId = mapping for phon, propagates to CrmPayload', () => {
+    const r1 = handleUpdate(
+      null,
+      msg({ isCommand: true, command: 'start', text: '/start phon', startParam: 'phon' }),
+    );
+    expect(r1.next.sourceId).toBe('PHON_TG_CONCIERGE');
+
+    const r2 = handleUpdate(r1.next, msg({ callbackData: 'main:contact' }));
+    expect(r2.next.sourceId).toBe('PHON_TG_CONCIERGE');
+
+    const r3 = handleUpdate(r2.next, msg({ text: 'Иван' }));
+    const r4 = handleUpdate(r3.next, msg({ text: '+79991234567' }));
+    const r5 = handleUpdate(r4.next, msg({ text: 'описание задачи на 30+ символов хватит уже' }));
+
+    expect(r5.sideEffects?.[0]?.kind).toBe('enqueue_crm');
+    if (r5.sideEffects?.[0]?.kind === 'enqueue_crm') {
+      expect(r5.sideEffects[0].payload.sourceId).toBe('PHON_TG_CONCIERGE');
+    }
+  });
+
+  it('/start без параметра → DEFAULT_SOURCE_ID', () => {
+    const r = handleUpdate(null, msg({ isCommand: true, command: 'start', text: '/start' }));
+    expect(r.next.sourceId).toBe('TG_CONCIERGE_DIRECT');
+  });
+
+  it('/start с неизвестным параметром → DEFAULT_SOURCE_ID', () => {
+    const r = handleUpdate(
+      null,
+      msg({ isCommand: true, command: 'start', text: '/start xxx', startParam: 'xxx' }),
+    );
+    expect(r.next.sourceId).toBe('TG_CONCIERGE_DIRECT');
+  });
+
   it('/start mid-dialog resets to idle', () => {
     const mid: DialogContext = {
       scenario: 'contact',

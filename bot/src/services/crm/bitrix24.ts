@@ -49,7 +49,7 @@ export function createBitrix24Client(cfg: Bitrix24Config): CRMClient {
             fields: {
               NAME: payload.name,
               PHONE: [{ VALUE: payload.phone, VALUE_TYPE: 'WORK' }],
-              SOURCE_ID: 'TELEGRAM',
+              SOURCE_ID: payload.sourceId,
               COMMENTS: 'Лид из Telegram через @veloce_concierge_bot',
             },
           });
@@ -68,7 +68,7 @@ export function createBitrix24Client(cfg: Bitrix24Config): CRMClient {
           fields: {
             TITLE: title,
             CONTACT_ID: contactId,
-            SOURCE_ID: 'TELEGRAM',
+            SOURCE_ID: payload.sourceId,
             COMMENTS:
               `${payload.description}\n\n` +
               `---\nКанал: Telegram @veloce_concierge_bot\nchat_id: ${payload.chatId}`,

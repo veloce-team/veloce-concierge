@@ -176,6 +176,34 @@ docker compose exec concierge-bot npm run set-webhook
 
 ---
 
+## 6.1 Deep-link start_param → SOURCE_ID
+
+Telegram deep-link `https://t.me/veloce_concierge_bot?start=XXX` приходит в бота как
+`/start XXX`. Параметр парсится в `adapters/tg/mappers.ts` → `IncomingMessage.startParam`,
+и в `scenarios/start.ts` резолвится через `config/sources.ts::resolveSourceId(startParam)`
+в External ID источника в Битрикс24. Результат «прилипает» к `DialogContext.sourceId`
+до следующего `/start` и проставляется в `CrmPayload.sourceId` при создании Сделки.
+
+Схема имён источников в Б24: **«Откуда → через что добрался»** (TG-канал; MAX появится
+в Блоке 2б отдельной таблицей `* → MAX Concierge`).
+
+| `?start=` | Источник в Б24                | External ID                      |
+|-----------|-------------------------------|----------------------------------|
+| (нет)     | `TG Concierge (direct)`       | `TG_CONCIERGE_DIRECT`            |
+| `phon`    | `Phon → TG Concierge`         | `PHON_TG_CONCIERGE`              |
+| `veloce`  | `Veloce.team → TG Concierge`  | `VELOCE_TG_CONCIERGE`            |
+| `site`    | `Veloce.team → TG Concierge`  | `VELOCE_TG_CONCIERGE` (алиас)    |
+| `kwork`   | `Kwork → TG Concierge`        | `KWORK_TG_CONCIERGE`             |
+
+Все 4 источника созданы в Б24 (Настройки → CRM → Справочники → Источники) — External ID
+проставлены в `bot/src/config/sources.ts`. Дополнительно остаётся `Тильда (Phon) — CTA-форма`
+для формы на лендинге Phon (отдельный канал, не через Concierge).
+
+Неизвестный `start_param` → fallback на `DEFAULT_SOURCE_ID` + `warn` в логах
+(поле `start_param`), чтобы заметить новый канал.
+
+---
+
 ## 7. Известные грабли (зафиксированы по ch3+ch4)
 
 Подробно — в Notion-странице «🐳 Инфра-стек» (справочник). Сжато здесь:

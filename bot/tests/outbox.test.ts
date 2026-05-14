@@ -31,6 +31,7 @@ const samplePayload: CrmPayload = {
   phone: '+79991234567',
   description: 'Нужен бот',
   chatId: '100',
+  sourceId: 'TEST_SOURCE',
 };
 
 describe('outbox worker', () => {

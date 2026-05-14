@@ -46,6 +46,7 @@ export type ParsedUpdate = {
   contact?: { phone: string; name?: string };
   isCommand: boolean;
   command?: string;
+  startParam?: string;
 };
 
 export function parseTgUpdate(raw: unknown): ParsedUpdate | null {
@@ -65,9 +66,14 @@ export function parseTgUpdate(raw: unknown): ParsedUpdate | null {
     const cmdEntity = entities.find((e) => e['type'] === 'bot_command' && e['offset'] === 0);
     const isCommand = Boolean(cmdEntity);
     let command: string | undefined;
+    let startParam: string | undefined;
     if (isCommand && text) {
       const len = (cmdEntity?.['length'] as number) ?? 0;
       command = text.slice(1, len).split('@')[0];
+      if (command === 'start') {
+        const tail = text.slice(len).trim();
+        if (tail) startParam = tail.split(/\s+/)[0];
+      }
     }
 
     const contactRaw = message['contact'] as Record<string, unknown> | undefined;
@@ -84,6 +90,7 @@ export function parseTgUpdate(raw: unknown): ParsedUpdate | null {
       text,
       isCommand,
       command,
+      startParam,
       contact,
     };
   }
