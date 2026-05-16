@@ -1,10 +1,10 @@
 api.veloce.team {
-	@bot path /webhook/tg /webhook/tg/* /health
-	handle @bot {
-		reverse_proxy concierge-bot:3000
+	@web path /api/lead /health
+	handle @web {
+		reverse_proxy concierge-web:3000
 	}
 	handle {
-		respond "Veloce API — coming soon" 200
+		respond 404
 	}
 }
 

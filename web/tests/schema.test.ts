@@ -1,0 +1,87 @@
+import { describe, it, expect } from 'vitest';
+import { LeadSchema, normalizePhone } from '../src/schema/lead.js';
+
+const valid = {
+  name: 'Иван Петров',
+  email: 'ivan@example.com',
+  phone: '+79991234567',
+  message: 'Хочу обсудить проект — лендинг + бот.',
+  source: 'veloce_site',
+  channel: 'form',
+};
+
+describe('LeadSchema', () => {
+  it('accepts valid payload', () => {
+    expect(LeadSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('rejects short name', () => {
+    const r = LeadSchema.safeParse({ ...valid, name: 'A' });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects long name', () => {
+    const r = LeadSchema.safeParse({ ...valid, name: 'A'.repeat(51) });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects invalid email', () => {
+    const r = LeadSchema.safeParse({ ...valid, email: 'not-an-email' });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects too-short phone', () => {
+    const r = LeadSchema.safeParse({ ...valid, phone: '123' });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects short message', () => {
+    const r = LeadSchema.safeParse({ ...valid, message: 'short' });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects unknown source', () => {
+    const r = LeadSchema.safeParse({ ...valid, source: 'tinder' });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects unknown channel', () => {
+    const r = LeadSchema.safeParse({ ...valid, channel: 'fax' });
+    expect(r.success).toBe(false);
+  });
+
+  it('allows honeypot empty/optional', () => {
+    expect(LeadSchema.safeParse({ ...valid, website: '' }).success).toBe(true);
+    expect(LeadSchema.safeParse(valid).success).toBe(true);
+  });
+});
+
+describe('normalizePhone', () => {
+  const expected = '+79991234567';
+
+  it('normalizes 8-prefix', () => {
+    expect(normalizePhone('89991234567')).toBe(expected);
+  });
+
+  it('normalizes 7-prefix without plus', () => {
+    expect(normalizePhone('79991234567')).toBe(expected);
+  });
+
+  it('keeps +7 as-is', () => {
+    expect(normalizePhone('+79991234567')).toBe(expected);
+  });
+
+  it('strips spaces and dashes', () => {
+    expect(normalizePhone('+7 (999) 123-45-67')).toBe(expected);
+  });
+
+  it('schema produces same normalized phone for all variants', () => {
+    const variants = ['89991234567', '79991234567', '+79991234567', '+7 999 123 45 67'];
+    const results = variants.map((p) => {
+      const r = LeadSchema.safeParse({ ...valid, phone: p });
+      expect(r.success).toBe(true);
+      return r.success ? r.data.phone : null;
+    });
+    expect(new Set(results).size).toBe(1);
+  });
+});
