@@ -9,6 +9,7 @@ services:
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./branding:/srv/branding:ro
+      - /opt/veloce-site:/srv/veloce-site:ro
       - caddy_data:/data
       - caddy_config:/config
     networks:

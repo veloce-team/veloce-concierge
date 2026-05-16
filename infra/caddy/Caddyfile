@@ -12,11 +12,7 @@ app.veloce.team {
 	respond "Veloce Mini App — coming soon" 200
 }
 
-www.veloce.team {
-	redir https://veloce.team{uri} permanent
-}
-
-veloce.team {
+veloce.team, www.veloce.team {
 	handle /branding/* {
 		root * /srv
 		file_server
@@ -24,6 +20,23 @@ veloce.team {
 	}
 
 	handle {
-		respond "Veloce — AI-augmented разработка для бизнеса. Coming soon. hello@veloce.team" 200
+		root * /srv/veloce-site
+		file_server
+		encode gzip zstd
+
+		header {
+			Strict-Transport-Security "max-age=31536000; includeSubDomains"
+			X-Content-Type-Options nosniff
+			X-Frame-Options DENY
+			Referrer-Policy strict-origin-when-cross-origin
+		}
+	}
+
+	@www host www.veloce.team
+	redir @www https://veloce.team{uri} permanent
+
+	log {
+		output file /var/log/caddy/veloce-site.log
+		format json
 	}
 }
