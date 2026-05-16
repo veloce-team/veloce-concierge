@@ -50,6 +50,8 @@ curl -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/setWebhook" \
 
 TG-бот вынесен в Helsinki по причине регионально-специфичной связности Telegram Bot API; остальные сервисы остаются в Москве. Окружения изолированы — у каждого свой `veloce-net` (external), общего состояния нет.
 
+Статика `veloce.team` обслуживается Caddy file-server'ом из `/opt/veloce-site` на Moscow VPS — это отдельный приватный репо [`AlexBurkovRus/veloce`](https://github.com/AlexBurkovRus/veloce), смонтированный в контейнер caddy как read-only bind (`/opt/veloce-site:/srv/veloce-site:ro`). Подробности (deploy key, ssh-config) — `CLAUDE.md` §5.
+
 Деплой на Helsinki:
 ```bash
 docker compose -f docker-compose.aeza.yml up -d --build
