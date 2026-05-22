@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Context } from 'hono';
 import type { Logger } from 'pino';
 import { LeadSchema, type Lead } from '../../../schema/lead.js';
-import { resolveWebSource } from '../../../config/sources.js';
+import { resolveWebSource, type WebSource } from '../../../config/sources.js';
 import type { CrmPayload } from '../../../services/crm/types.js';
 import type { IdempotencyStore } from '../../../services/idempotency/store.js';
 import type { OutboxQueue } from '../../../services/outbox/queue.js';
@@ -15,6 +15,12 @@ export type LeadHandlerDeps = {
   idempotency: IdempotencyStore;
   logger: Logger;
   now?: () => number;
+  /**
+   * Если задан — handler возвращает 400, когда payload.source не совпадает
+   * с этим значением. Используется для сегрегации route'ов:
+   * /api/lead принимает только veloce_site, /api/lead/maxbot — только maxbot_pro.
+   */
+  expectedSource?: WebSource;
 };
 
 function shortRef(): string {
@@ -59,6 +65,21 @@ export function createLeadHandler(deps: LeadHandlerDeps) {
     }
 
     const lead: Lead = parsed.data;
+
+    if (deps.expectedSource && lead.source !== deps.expectedSource) {
+      log.warn(
+        { got: lead.source, expected: deps.expectedSource },
+        'source/route mismatch',
+      );
+      return c.json(
+        {
+          status: 'invalid',
+          errors: [{ field: 'source', message: 'unexpected source for this route' }],
+        },
+        400,
+      );
+    }
+
     const sourceId = resolveWebSource(lead.source);
     if (!sourceId) {
       log.error({ source: lead.source }, 'unknown source after schema');

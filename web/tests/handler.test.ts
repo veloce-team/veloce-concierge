@@ -30,12 +30,25 @@ function makeApp(crm: CRMClient) {
   const idempotency = createIdempotencyStore(db, 60_000);
   const outbox = createOutboxQueue(db);
   const worker = createOutboxWorker({ queue: outbox, crm, logger });
-  const lead = createLeadHandler({ outbox, worker, idempotency, logger });
+  const lead = createLeadHandler({
+    outbox,
+    worker,
+    idempotency,
+    logger,
+    expectedSource: 'veloce_site',
+  });
+  const leadMaxbot = createLeadHandler({
+    outbox,
+    worker,
+    idempotency,
+    logger,
+    expectedSource: 'maxbot_pro',
+  });
   return {
     app: createServer(
-      { lead, health: createHealthHandler(Date.now()) },
+      { lead, leadMaxbot, health: createHealthHandler(Date.now()) },
       {
-        corsOrigins: ['https://veloce.team'],
+        corsOrigins: ['https://veloce.team', 'https://maxbot-pro.ru'],
         rateLimitWindowMs: 60_000,
         rateLimitMax: 100,
       },
@@ -161,5 +174,81 @@ describe('POST /api/lead', () => {
     expect(r.status).toBe(200);
     const body = await r.json();
     expect(body.status).toBe('ok');
+  });
+});
+
+describe('expectedSource route segregation', () => {
+  let env: ReturnType<typeof makeApp>;
+  let crmCalls: CrmPayload[];
+
+  beforeEach(() => {
+    crmCalls = [];
+    const { crm } = fakeCrm(crmCalls);
+    env = makeApp(crm);
+  });
+
+  const maxbotBody = {
+    name: 'Анна',
+    email: 'a@example.com',
+    phone: '+79991112233',
+    message: 'Заявка с гос-посадочной max-microsite',
+    source: 'maxbot_pro',
+    channel: 'form',
+    landing: 'gos',
+    intent: 'kp',
+    product: 'miniapp',
+  };
+
+  it('POST /api/lead/maxbot c maxbot_pro → 200 + CRM call', async () => {
+    const r = await env.app.request('/api/lead/maxbot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(maxbotBody),
+    });
+    expect(r.status).toBe(200);
+    await flush(env.worker);
+    expect(crmCalls.length).toBe(1);
+    expect(crmCalls[0]!.sourceId).toBe('MAXBOT_PRO');
+    expect(crmCalls[0]!.landing).toBe('gos');
+  });
+
+  it('POST /api/lead/maxbot c veloce_site → 400, без CRM call', async () => {
+    const r = await env.app.request('/api/lead/maxbot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...validBody, source: 'veloce_site' }),
+    });
+    expect(r.status).toBe(400);
+    const body = await r.json();
+    expect(body.status).toBe('invalid');
+    expect(body.errors[0].field).toBe('source');
+    expect(body.errors[0].message).toBe('unexpected source for this route');
+    await flush(env.worker);
+    expect(crmCalls.length).toBe(0);
+  });
+
+  it('POST /api/lead c maxbot_pro → 400, без CRM call', async () => {
+    const r = await env.app.request('/api/lead', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(maxbotBody),
+    });
+    expect(r.status).toBe(400);
+    const body = await r.json();
+    expect(body.errors[0].field).toBe('source');
+    await flush(env.worker);
+    expect(crmCalls.length).toBe(0);
+  });
+
+  it('POST /api/lead c veloce_site → 200 (backward-compat)', async () => {
+    const r = await env.app.request('/api/lead', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validBody),
+    });
+    expect(r.status).toBe(200);
+    await flush(env.worker);
+    expect(crmCalls.length).toBe(1);
+    expect(crmCalls[0]!.sourceId).toBe('VELOCE_SITE');
   });
 });

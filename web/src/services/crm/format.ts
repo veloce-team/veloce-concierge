@@ -40,7 +40,8 @@ export function formatCommentsPrefix(payload: CrmPayload): string {
   }
   if (payload.landing) lines.push(`Лендинг: ${LANDING_LABELS[payload.landing]}`);
   if (payload.intent) lines.push(`Запрос: ${INTENT_LABELS[payload.intent]}`);
-  if (payload.product && payload.product !== '') {
+  // payload.product === '' (CTA не из карточки витрины) — truthy-check отсечёт его.
+  if (payload.product) {
     lines.push(`Интерес: ${PRODUCT_LABELS[payload.product]}`);
   }
 

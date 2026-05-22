@@ -42,10 +42,19 @@ async function main(): Promise<void> {
     worker,
     idempotency,
     logger: logger.child({ component: 'lead' }),
+    expectedSource: 'veloce_site',
+  });
+
+  const leadMaxbot = createLeadHandler({
+    outbox,
+    worker,
+    idempotency,
+    logger: logger.child({ component: 'lead-maxbot' }),
+    expectedSource: 'maxbot_pro',
   });
 
   const app = createServer(
-    { lead, health: createHealthHandler(startedAtMs) },
+    { lead, leadMaxbot, health: createHealthHandler(startedAtMs) },
     {
       corsOrigins: env.CORS_ORIGINS,
       rateLimitWindowMs: env.RATE_LIMIT_WINDOW_MS,
