@@ -20,8 +20,11 @@ export const LeadSchema = z.object({
       message: 'Телефон должен содержать 10–15 цифр в формате E.164 (+...)',
     }),
   message: z.string().trim().min(10).max(2000),
-  source: z.enum(['veloce_site']),
+  source: z.enum(['veloce_site', 'maxbot_pro']),
   channel: z.enum(['form', 'telegram', 'mailto']),
+  landing: z.enum(['home', 'uk', 'gos']).optional(),
+  intent: z.enum(['kp', 'tz']).optional(),
+  product: z.enum(['obrashcheniya', 'miniapp', 'zapis', '']).optional(),
   website: z.string().max(0).optional(),
 });
 

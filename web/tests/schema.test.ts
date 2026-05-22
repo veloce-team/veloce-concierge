@@ -54,6 +54,48 @@ describe('LeadSchema', () => {
     expect(LeadSchema.safeParse({ ...valid, website: '' }).success).toBe(true);
     expect(LeadSchema.safeParse(valid).success).toBe(true);
   });
+
+  it('accepts maxbot_pro source without optional context fields', () => {
+    const r = LeadSchema.safeParse({ ...valid, source: 'maxbot_pro' });
+    expect(r.success).toBe(true);
+  });
+
+  it('accepts maxbot_pro with landing/intent/product', () => {
+    const r = LeadSchema.safeParse({
+      ...valid,
+      source: 'maxbot_pro',
+      landing: 'gos',
+      intent: 'kp',
+      product: 'obrashcheniya',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('accepts empty-string product (CTA не из карточки витрины)', () => {
+    const r = LeadSchema.safeParse({
+      ...valid,
+      source: 'maxbot_pro',
+      landing: 'gos',
+      intent: 'kp',
+      product: '',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects unknown landing', () => {
+    const r = LeadSchema.safeParse({ ...valid, source: 'maxbot_pro', landing: 'other' });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects unknown intent', () => {
+    const r = LeadSchema.safeParse({ ...valid, source: 'maxbot_pro', intent: 'rfq' });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects whitespace product (not in enum)', () => {
+    const r = LeadSchema.safeParse({ ...valid, source: 'maxbot_pro', product: ' ' });
+    expect(r.success).toBe(false);
+  });
 });
 
 describe('normalizePhone', () => {
