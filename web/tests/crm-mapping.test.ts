@@ -68,8 +68,48 @@ describe('Bitrix24Client.createWebLead', () => {
     expect(dealFields.SOURCE_ID).toBe('VELOCE_SITE');
     expect(dealFields.UF_CRM_CHANNEL).toBe('form');
     expect(dealFields.COMMENTS).toBe('Хочу проект');
-    expect(dealFields.TITLE).toContain('Иван');
+    expect(dealFields.TITLE).toBe('Заявка с сайта veloce.team — Иван');
     expect(dealFields.ASSIGNED_BY_ID).toBe(1);
+  });
+
+  it('maxbot_pro payload — TITLE с лейблом MaxBot Pro, COMMENTS со структурным префиксом', () => {
+    const calls: Array<{ method: string; body: any }> = [];
+    const client = createBitrix24Client({
+      webhookUrl: 'https://example.bitrix24.ru/rest/1/abc/',
+      assignedById: 1,
+      fetchImpl: fakeFetch({
+        'crm.contact.add': (body) => {
+          calls.push({ method: 'crm.contact.add', body });
+          return 42;
+        },
+        'crm.deal.add': (body) => {
+          calls.push({ method: 'crm.deal.add', body });
+          return 99;
+        },
+      }),
+    });
+
+    return client
+      .createWebLead({
+        ...makePayload(),
+        source: 'maxbot_pro',
+        sourceId: 'MAXBOT_PRO',
+        landing: 'gos',
+        intent: 'kp',
+        product: 'miniapp',
+        message: 'Заявка через max-microsite',
+      })
+      .then(() => {
+        const dealFields = calls[1]!.body.fields;
+        expect(dealFields.TITLE).toBe('Заявка с сайта MaxBot Pro — Иван');
+        expect(dealFields.COMMENTS).toContain('Сайт: MaxBot Pro');
+        expect(dealFields.COMMENTS).toContain('Лендинг: Для администраций (/administraciyam/)');
+        expect(dealFields.COMMENTS).toContain('Запрос: Коммерческое предложение');
+        expect(dealFields.COMMENTS).toContain('Интерес: Mini App «Портал жителя округа»');
+        expect(dealFields.COMMENTS).toContain('---');
+        expect(dealFields.COMMENTS.endsWith('Заявка через max-microsite')).toBe(true);
+        expect(dealFields.SOURCE_ID).toBe('MAXBOT_PRO');
+      });
   });
 
   it('throws CrmPartialError without contactId if contact.add fails', async () => {

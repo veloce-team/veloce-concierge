@@ -1,4 +1,5 @@
 import type { CRMClient, CrmPayload, CrmResult } from './types.js';
+import { formatComments, formatDealTitle } from './format.js';
 
 export class CrmPartialError extends Error {
   constructor(message: string, public readonly contactId?: number) {
@@ -77,9 +78,9 @@ export function createBitrix24Client(cfg: Bitrix24Config): CRMClient {
       try {
         const id = await call<number | string>('crm.deal.add', {
           fields: {
-            TITLE: `Заявка с сайта veloce.team — ${payload.name}`,
+            TITLE: formatDealTitle(payload),
             CONTACT_ID: contactId,
-            COMMENTS: payload.message,
+            COMMENTS: formatComments(payload),
             SOURCE_ID: payload.sourceId,
             UF_CRM_CHANNEL: payload.channel,
             OPENED: 'Y',
