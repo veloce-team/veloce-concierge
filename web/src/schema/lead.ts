@@ -25,6 +25,7 @@ export const LeadSchema = z.object({
   landing: z.enum(['home', 'uk', 'gos']).optional(),
   intent: z.enum(['kp', 'tz']).optional(),
   product: z.enum(['obrashcheniya', 'miniapp', 'zapis', '']).optional(),
+  consent: z.literal('on'),
   website: z.string().max(0).optional(),
 });
 

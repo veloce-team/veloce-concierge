@@ -8,6 +8,7 @@ const valid = {
   message: 'Хочу обсудить проект — лендинг + бот.',
   source: 'veloce_site',
   channel: 'form',
+  consent: 'on',
 };
 
 describe('LeadSchema', () => {
@@ -95,6 +96,29 @@ describe('LeadSchema', () => {
   it('rejects whitespace product (not in enum)', () => {
     const r = LeadSchema.safeParse({ ...valid, source: 'maxbot_pro', product: ' ' });
     expect(r.success).toBe(false);
+  });
+});
+
+describe('LeadSchema consent field', () => {
+  it('принимает consent: "on"', () => {
+    expect(LeadSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('отвергает payload без consent', () => {
+    const { consent, ...withoutConsent } = valid;
+    expect(LeadSchema.safeParse(withoutConsent).success).toBe(false);
+  });
+
+  it('отвергает consent: false', () => {
+    expect(LeadSchema.safeParse({ ...valid, consent: false }).success).toBe(false);
+  });
+
+  it('отвергает consent: "off"', () => {
+    expect(LeadSchema.safeParse({ ...valid, consent: 'off' }).success).toBe(false);
+  });
+
+  it('отвергает consent: true (boolean)', () => {
+    expect(LeadSchema.safeParse({ ...valid, consent: true }).success).toBe(false);
   });
 });
 

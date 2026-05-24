@@ -70,6 +70,7 @@ const validBody = {
   message: 'Длинное сообщение для теста',
   source: 'veloce_site',
   channel: 'form',
+  consent: 'on',
 };
 
 function fakeCrm(calls: CrmPayload[] = []): { crm: CRMClient; calls: CrmPayload[] } {
@@ -194,6 +195,7 @@ describe('expectedSource route segregation', () => {
     message: 'Заявка с гос-посадочной max-microsite',
     source: 'maxbot_pro',
     channel: 'form',
+    consent: 'on',
     landing: 'gos',
     intent: 'kp',
     product: 'miniapp',
