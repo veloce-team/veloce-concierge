@@ -1,6 +1,7 @@
 import type { Logger } from 'pino';
 import { CrmPartialError } from '../crm/bitrix24.js';
 import type { CRMClient, CrmPayload } from '../crm/types.js';
+import type { LeadNotifier } from '../notifications/lead-notifier.js';
 import type { OutboxQueue, OutboxRecord } from './queue.js';
 
 // Backoff per плана §Д.3: 5s → 30s → 2m → 10m → 1h → 6h → 24h. Индекс — номер уже неуспешной попытки.
@@ -26,6 +27,7 @@ export type OutboxWorkerDeps = {
   queue: OutboxQueue;
   crm: CRMClient;
   logger: Logger;
+  notifier?: LeadNotifier;
   intervalMs?: number;
   now?: () => number;
 };
@@ -50,6 +52,11 @@ export function createOutboxWorker(deps: OutboxWorkerDeps): OutboxWorker {
         dealId: result.dealId,
       };
       deps.queue.markSent(rec.id, merged, now());
+      if (deps.notifier) {
+        deps.notifier.notify(merged).catch((err) =>
+          log.warn({ err }, 'notifier.notify threw'),
+        );
+      }
       log.info({ latency_ms: now() - start }, 'crm: web-lead delivered');
     } catch (err) {
       const message = (err as Error).message;

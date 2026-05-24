@@ -4,6 +4,7 @@ import { parseEnv } from './config/env.js';
 import { startCleanupJob } from './infra/cleanup.js';
 import { createHealthHandler } from './infra/http/health.js';
 import { createMetricsHandler } from './infra/http/metrics.js';
+import { createNotifyHandler } from './infra/http/notify-handler.js';
 import { createServer, startServer } from './infra/http/server.js';
 import { createLogger } from './infra/logger.js';
 import { createBitrix24Client } from './services/crm/bitrix24.js';
@@ -51,11 +52,19 @@ async function main(): Promise<void> {
     bot: tg.bot,
   });
 
+  const notifyLead = createNotifyHandler({
+    bot: tg.bot,
+    operatorChatId: env.OPERATOR_CHAT_ID,
+    secret: env.LEAD_NOTIFICATION_SECRET,
+    logger: logger.child({ component: 'notify-handler' }),
+  });
+
   const app = createServer(
     {
       webhook,
       health: createHealthHandler(startedAtMs),
       metrics: createMetricsHandler({ db, sessions, outbox, startedAtMs }),
+      notifyLead,
     },
     logger,
   );

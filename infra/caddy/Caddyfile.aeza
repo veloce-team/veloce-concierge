@@ -1,8 +1,16 @@
 bot.veloce.team {
-	@bot path /webhook/tg /webhook/tg/* /health
+	@bot path /webhook/tg /webhook/tg/* /health /metrics
 	handle @bot {
 		reverse_proxy concierge-bot:3000
 	}
+
+	@internal path /internal/*
+	handle @internal {
+		@not_moscow not client_ip 85.239.61.176
+		respond @not_moscow "Forbidden" 403
+		reverse_proxy concierge-bot:3000
+	}
+
 	handle {
 		respond "Veloce Bot" 200
 	}

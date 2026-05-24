@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh veloce-vps *)",
+      "Bash(git rm *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(npm run *)",
+      "Bash(ssh *)",
+      "Bash(getent hosts *)",
+      "Bash(umask 077)",
+      "Bash(scp -q veloce-vps:/opt/veloce-concierge/bot/.env /tmp/.env.aeza.transit)",
+      "Bash(sed -i 's|^PUBLIC_URL=.*$|PUBLIC_URL=https://bot.veloce.team|' /tmp/.env.aeza.transit)",
+      "Read(//tmp/**)",
+      "Bash(scp -q /tmp/.env.aeza.transit veloce-aeza:/opt/veloce-concierge/bot/.env)",
+      "Bash(curl -i -s --max-time 15 https://bot.veloce.team/health)",
+      "Bash(curl -i -s --max-time 10 https://api.veloce.team/health)",
+      "Bash(curl -i -s --max-time 10 https://api.veloce.team/)",
+      "Bash(curl -i -s --max-time 10 https://veloce.team/)",
+      "Bash(curl -i -s --max-time 10 https://bot.veloce.team/health)",
+      "Bash(npm test *)",
+      "Bash(npx tsc *)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(npm install *)",
+      "Bash(docker build *)",
+      "Read(//mnt/c/Projects/veloce/**)",
+      "Bash(wc -l index.html landing.css landing.js)",
+      "Bash(node -e ' *)"
+    ]
+  }
+}

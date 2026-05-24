@@ -6,6 +6,7 @@ export type ServerHandlers = {
   webhook: (c: Context) => Promise<Response> | Response;
   health: (c: Context) => Response;
   metrics: (c: Context) => Response;
+  notifyLead: (c: Context) => Promise<Response>;
 };
 
 export function createServer(handlers: ServerHandlers, logger: Logger) {
@@ -14,6 +15,7 @@ export function createServer(handlers: ServerHandlers, logger: Logger) {
   app.post('/webhook/tg', handlers.webhook);
   app.get('/health', handlers.health);
   app.get('/metrics', handlers.metrics);
+  app.post('/internal/notify-lead', handlers.notifyLead);
 
   app.notFound((c) => c.json({ ok: false, error: 'not found' }, 404));
   app.onError((err, c) => {

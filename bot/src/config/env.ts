@@ -17,6 +17,13 @@ const EnvSchema = z.object({
     .enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
     .default('info'),
 
+  LEAD_NOTIFICATION_SECRET: z
+    .string()
+    .min(32, 'must be at least 32 characters for notify-lead Bearer auth'),
+  OPERATOR_CHAT_ID: z
+    .string()
+    .regex(/^-?\d+$/, 'must be numeric chat_id, with optional leading -'),
+
   PUBLIC_URL: z.string().url('must be the public origin where webhook is reachable'),
   NODE_ENV: z.enum(['development', 'production']),
   PORT: z.coerce.number().int().positive().default(3000),
