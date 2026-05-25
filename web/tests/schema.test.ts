@@ -170,12 +170,12 @@ describe('LeadSchema — русские сообщения валидации', 
     }
   });
 
-  it('phone сохраняет существующее русское сообщение (regression)', () => {
+  it('phone сохраняет русское сообщение (упрощён без E.164)', () => {
     const result = LeadSchema.safeParse({ ...validBase, phone: '+712' });
     expect(result.success).toBe(false);
     if (!result.success) {
       const phoneIssue = result.error.issues.find((i) => i.path[0] === 'phone');
-      expect(phoneIssue?.message).toBe('Телефон должен содержать 10–15 цифр в формате E.164 (+...)');
+      expect(phoneIssue?.message).toBe('Введите корректный номер телефона');
     }
   });
 });

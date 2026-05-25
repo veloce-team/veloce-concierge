@@ -25,7 +25,7 @@ export const LeadSchema = z.object({
     .trim()
     .transform(normalizePhone)
     .refine((v) => /^\+\d{10,15}$/.test(v), {
-      message: 'Телефон должен содержать 10–15 цифр в формате E.164 (+...)',
+      message: 'Введите корректный номер телефона',
     }),
   message: z
     .string()
