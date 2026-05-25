@@ -122,6 +122,64 @@ describe('LeadSchema consent field', () => {
   });
 });
 
+describe('LeadSchema — русские сообщения валидации', () => {
+  const validBase = {
+    name: 'Иван Иванов',
+    email: 'ivan@example.com',
+    phone: '+71234567890',
+    message: 'Сообщение длиннее 10 символов',
+    source: 'maxbot_pro' as const,
+    channel: 'form' as const,
+    consent: 'on' as const,
+  };
+
+  it('name короче 2 символов → русское сообщение', () => {
+    const result = LeadSchema.safeParse({ ...validBase, name: 'a' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const nameIssue = result.error.issues.find((i) => i.path[0] === 'name');
+      expect(nameIssue?.message).toBe('Имя должно содержать минимум 2 символа');
+    }
+  });
+
+  it('email некорректный → русское сообщение', () => {
+    const result = LeadSchema.safeParse({ ...validBase, email: 'abc' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const emailIssue = result.error.issues.find((i) => i.path[0] === 'email');
+      expect(emailIssue?.message).toBe('Введите корректный email-адрес');
+    }
+  });
+
+  it('message короче 10 символов → русское сообщение', () => {
+    const result = LeadSchema.safeParse({ ...validBase, message: 'short' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const messageIssue = result.error.issues.find((i) => i.path[0] === 'message');
+      expect(messageIssue?.message).toBe('Опишите задачу подробнее — минимум 10 символов');
+    }
+  });
+
+  it('consent отсутствует → русское сообщение', () => {
+    const { consent, ...withoutConsent } = validBase;
+    const result = LeadSchema.safeParse(withoutConsent);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const consentIssue = result.error.issues.find((i) => i.path[0] === 'consent');
+      expect(consentIssue?.message).toBe('Подтвердите согласие на обработку персональных данных');
+    }
+  });
+
+  it('phone сохраняет существующее русское сообщение (regression)', () => {
+    const result = LeadSchema.safeParse({ ...validBase, phone: '+712' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const phoneIssue = result.error.issues.find((i) => i.path[0] === 'phone');
+      expect(phoneIssue?.message).toBe('Телефон должен содержать 10–15 цифр в формате E.164 (+...)');
+    }
+  });
+});
+
 describe('normalizePhone', () => {
   const expected = '+79991234567';
 
