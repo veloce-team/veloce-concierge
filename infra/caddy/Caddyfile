@@ -1,5 +1,5 @@
 api.veloce.team {
-	@web path /api/lead /health
+	@web path /api/lead* /health
 	handle @web {
 		reverse_proxy concierge-web:3000
 	}
@@ -39,4 +39,43 @@ veloce.team, www.veloce.team {
 		output file /var/log/caddy/veloce-site.log
 		format json
 	}
+}
+# max-microsite — статика
+maxbot-pro.ru, www.maxbot-pro.ru {
+    # Каноникализация: www → корень
+    @www host www.maxbot-pro.ru
+    redir @www https://maxbot-pro.ru{uri} 308
+
+    root * /srv/maxbot-pro/dist
+    encode gzip zstd
+
+    # 301 redirects legacy URL → /legal/
+    redir /privacy/ /legal/ 301
+    redir /privacy /legal/ 301
+    redir /offer/ /legal/ 301
+    redir /offer /legal/ 301
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
+    }
+
+    # 404 → dist/404.html со статусом 404
+    handle_errors {
+        @404 expression {http.error.status_code} == 404
+        rewrite @404 /404.html
+        file_server
+    }
+
+    file_server
+
+    # JSON-логи запросов
+    log {
+        output file /var/log/caddy/maxbot-pro.log
+        format json
+    }
 }
