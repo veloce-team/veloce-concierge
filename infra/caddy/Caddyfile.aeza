@@ -15,3 +15,13 @@ bot.veloce.team {
 		respond "Veloce Bot" 200
 	}
 }
+
+wa.maxbot-pro.ru {
+	@wa path /webhook /webhook/* /health
+	handle @wa {
+		reverse_proxy waba-pulse:3000
+	}
+	handle {
+		respond "WABA pulse" 200
+	}
+}

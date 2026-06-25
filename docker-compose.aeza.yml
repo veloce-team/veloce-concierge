@@ -25,6 +25,18 @@ services:
     networks:
       - veloce-net
 
+  waba-pulse:
+    build: ./waba-pulse
+    container_name: veloce-waba-pulse-aeza
+    restart: unless-stopped
+    env_file: ./waba-pulse/.env
+    volumes:
+      - /opt/waba-pulse-data:/data
+    expose:
+      - "3000"
+    networks:
+      - veloce-net
+
 volumes:
   caddy_data:
   caddy_config:
