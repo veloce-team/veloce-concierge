@@ -7,23 +7,27 @@ api.veloce.team {
 		respond 404
 	}
 }
-
-app.veloce.team {
-	respond "Veloce Mini App — coming soon" 200
+app.maxbot-pro.ru {
+	reverse_proxy repair-calc:3000
+	log {
+		output file /var/log/caddy/repair-calc-app.log
+		format json
+	}
 }
 
+app.veloce.team {
+	respond "app.veloce.team is not used for prototypes. Use maxbot-pro.ru subdomains." 410
+}
 veloce.team, www.veloce.team {
 	handle /branding/* {
 		root * /srv
 		file_server
 		header Cache-Control "public, max-age=86400"
 	}
-
 	handle {
 		root * /srv/veloce-team
 		file_server
 		encode gzip zstd
-
 		header {
 			Strict-Transport-Security "max-age=31536000; includeSubDomains"
 			X-Content-Type-Options nosniff
@@ -31,12 +35,18 @@ veloce.team, www.veloce.team {
 			Referrer-Policy strict-origin-when-cross-origin
 		}
 	}
-
 	@www host www.veloce.team
 	redir @www https://veloce.team{uri} permanent
-
 	log {
 		output file /var/log/caddy/veloce-site.log
 		format json
 	}
 }
+cm.maxbot-pro.ru {
+	reverse_proxy cm-bot:8000
+	log {
+		output file /var/log/caddy/cm.log
+		format json
+	}
+}
+
