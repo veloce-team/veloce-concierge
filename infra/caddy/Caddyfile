@@ -25,7 +25,7 @@ veloce.team, www.veloce.team {
 		header Cache-Control "public, max-age=86400"
 	}
 	handle {
-		root * /srv/veloce-team
+		root * /srv/veloce-team/current
 		file_server
 		encode gzip zstd
 		header {
