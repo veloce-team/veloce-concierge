@@ -37,9 +37,19 @@ services:
     networks:
       - veloce-net
 
+  uptime-kuma:
+    image: louislam/uptime-kuma:2.4.0
+    container_name: veloce-uptime-kuma-aeza
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3002:3001"
+    volumes:
+      - uptime_kuma_data:/app/data
+
 volumes:
   caddy_data:
   caddy_config:
+  uptime_kuma_data:
 
 networks:
   veloce-net:
