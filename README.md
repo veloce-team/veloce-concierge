@@ -45,7 +45,7 @@ curl -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/setWebhook" \
 
 | Домены | Локация | Compose-файл |
 |---|---|---|
-| `veloce.team`, `www.veloce.team`, `api.veloce.team`, `app.veloce.team` | Moscow VPS (`85.239.61.176`) | `docker-compose.yml` + `infra/caddy/Caddyfile` |
+| `veloce.team`, `www.veloce.team`, `api.veloce.team`, `app.veloce.team` | Moscow VPS (`200.165.229.107`) | `docker-compose.yml` + `infra/caddy/Caddyfile` |
 | `bot.veloce.team` (Telegram-бот) | Helsinki VPS (`193.29.225.31`) | `docker-compose.aeza.yml` + `infra/caddy/Caddyfile.aeza` |
 
 TG-бот вынесен в Helsinki по причине регионально-специфичной связности Telegram Bot API; остальные сервисы остаются в Москве. Окружения изолированы — у каждого свой `veloce-net` (external), общего состояния нет.
