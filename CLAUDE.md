@@ -108,7 +108,7 @@ bot/src/
 
 | Домены | VPS | Compose-файл |
 |---|---|---|
-| `veloce.team`, `www`, `api.veloce.team`, `app.veloce.team` | Moscow TimeWeb (85.239.61.176) | `docker-compose.yml` + `infra/caddy/Caddyfile` |
+| `veloce.team`, `www`, `api.veloce.team`, `app.veloce.team` | Moscow TimeWeb (200.165.229.107) | `docker-compose.yml` + `infra/caddy/Caddyfile` |
 | `bot.veloce.team` (только TG-бот) | Helsinki Aeza (193.29.225.31) | `docker-compose.aeza.yml` + `infra/caddy/Caddyfile.aeza` |
 
 Сеть `veloce-net` — external, создаётся на каждом VPS однократно (`docker network create veloce-net`).
