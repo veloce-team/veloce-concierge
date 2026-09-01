@@ -46,7 +46,7 @@ describe('stateful deploy workflow safety contract', () => {
   });
 
   it('freezes a runnable rollback image before the candidate replaces the compose tag', () => {
-    const freezeRollbackImage = workflow.indexOf('docker image tag "$RUNNING_IMAGE" "$PREVIOUS_IMAGE"');
+    const freezeRollbackImage = workflow.indexOf('docker build --tag "$PREVIOUS_IMAGE" "$PREVIOUS/web"');
     const candidateBuild = workflow.indexOf('build concierge-web');
     expect(freezeRollbackImage).toBeGreaterThan(0);
     expect(candidateBuild).toBeGreaterThan(freezeRollbackImage);
