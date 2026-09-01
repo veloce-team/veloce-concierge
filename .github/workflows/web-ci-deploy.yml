@@ -76,9 +76,14 @@ jobs:
             mkdir -p "$BACKUPS"
             chmod 700 "$BACKUPS"
 
-            RUNNING_IMAGE="$(docker inspect -f '{{.Image}}' veloce-concierge-web)"
-            test -n "$RUNNING_IMAGE"
-            docker image tag "$RUNNING_IMAGE" "$PREVIOUS_IMAGE"
+            PREVIOUS="$BASE"
+            HAD_CURRENT=0
+            if test -L "$CURRENT"; then
+              HAD_CURRENT=1
+              PREVIOUS="$(readlink -f "$CURRENT")"
+            fi
+            test -f "$PREVIOUS/web/Dockerfile"
+            docker build --tag "$PREVIOUS_IMAGE" "$PREVIOUS/web"
 
             docker compose -p "$PROJECT" -f "$RELEASE/docker-compose.yml" build concierge-web
             IMAGE="$(docker compose -p "$PROJECT" -f "$RELEASE/docker-compose.yml" images -q concierge-web)"
@@ -94,12 +99,6 @@ jobs:
               -v "$BACKUPS/web-$SHA.rehearsal.sqlite:/data/web.sqlite" \
               "$IMAGE" node dist/tools/db-migrate.js /data/web.sqlite
 
-            PREVIOUS="$BASE"
-            HAD_CURRENT=0
-            if test -L "$CURRENT"; then
-              HAD_CURRENT=1
-              PREVIOUS="$(readlink -f "$CURRENT")"
-            fi
             ROLLBACK_SMOKE="veloce-rollback-smoke-$SHA"
             trap 'docker rm -f "$ROLLBACK_SMOKE" >/dev/null 2>&1 || true' EXIT
             docker run -d --rm --name "$ROLLBACK_SMOKE" --network none \
