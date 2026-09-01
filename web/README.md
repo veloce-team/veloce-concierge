@@ -2,6 +2,8 @@
 
 Веб-микросервис для приёма заявок с двух сайтов:
 - **veloce.team** → `POST /api/lead` (source=`veloce_site`, SOURCE_ID=`VELOCE_SITE`).
+- **veloce.team Analytics Contract v1** → `POST /api/lead/v1` (strict payload,
+  durable `lead_event_id`, успешный ответ только после подтверждения Сделки в CRM).
 - **maxbot-pro.ru** (max-microsite, master_source — vault `06-projects/max-microsite/`) → `POST /api/lead/maxbot` (source=`maxbot_pro`, SOURCE_ID=`MAXBOT_PRO`).
 
 Сегрегация route'ов через `expectedSource` в `createLeadHandler` — payload на «не свой» route отбивается 400 'unexpected source for this route'.
@@ -27,6 +29,9 @@ npm run typecheck
 ## Эндпоинты
 
 - `POST /api/lead` — приём заявки c veloce.team (JSON, см. `src/schema/lead.ts`).
+- `POST /api/lead/v1` — strict Analytics Contract v1 (см. `src/schema/lead-v1.ts`).
+  Повтор с тем же `lead_event_id` возвращает сохранённый подтверждённый deal ID;
+  временная ошибка CRM возвращает retryable `503` и оставляет запись в outbox.
 - `POST /api/lead/maxbot` — приём заявки c maxbot-pro.ru (та же schema +
   опциональные `landing`/`intent`/`product` для контекста гос-посадочной).
 - `GET /health` — статус + uptime.
@@ -41,3 +46,15 @@ npm run typecheck
 
 При сбое — запись падает в SQLite outbox, фоновый воркер досылает с экспоненциальным backoff
 (5s → 30s → 2m → 10m → 1h → 6h → 24h, 7 попыток).
+
+## CRM schema v1
+
+Manifest находится в `src/tools/crm-schema.ts`. По умолчанию команда выполняет
+read-only dry-run. `--apply` создаёт только отсутствующие поля и затем делает
+полный exact read-back; несовпадающий тип/XML_ID/label/list visibility завершает
+команду ошибкой.
+
+```bash
+BITRIX24_WEBHOOK_URL='…' npm run crm:schema
+BITRIX24_WEBHOOK_URL='…' npm run crm:schema -- --apply
+```

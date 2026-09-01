@@ -15,12 +15,11 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 
 function setup() {
   const db = new Database(':memory:');
-  db.exec(
-    readFileSync(
-      join(HERE, '..', 'src/services/sessions/migrations/001-init.sql'),
-      'utf8',
-    ),
-  );
+  for (const migration of ['001-init.sql', '002-lead-event-id.sql']) {
+    db.exec(
+      readFileSync(join(HERE, '..', 'src/services/sessions/migrations', migration), 'utf8'),
+    );
+  }
   const calls: CrmPayload[] = [];
   const crm: CRMClient = {
     async createWebLead(p) {

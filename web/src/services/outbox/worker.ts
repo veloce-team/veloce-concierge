@@ -51,7 +51,12 @@ export function createOutboxWorker(deps: OutboxWorkerDeps): OutboxWorker {
         contactId: result.contactId,
         dealId: result.dealId,
       };
-      deps.queue.markSent(rec.id, merged, now());
+      deps.queue.markSent(
+        rec.id,
+        merged,
+        now(),
+        rec.leadEventId ? { type: 'deal', id: String(result.dealId) } : undefined,
+      );
       if (deps.notifier) {
         deps.notifier.notify(merged).catch((err) =>
           log.warn({ err }, 'notifier.notify threw'),
