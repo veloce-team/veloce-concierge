@@ -29,6 +29,18 @@ const EnvSchema = z
       .string()
       .url('must be a full URL like https://{portal}.bitrix24.ru/rest/{user_id}/{key}/'),
     ASSIGNED_BY_ID: z.coerce.number().int().positive(),
+    BITRIX24_PORTAL_ID: z.string().min(1).optional(),
+
+    ANALYTICS_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+    ANALYTICS_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(300_000),
+    ANALYTICS_UPLOAD_INTERVAL_MS: z.coerce.number().int().positive().default(30_000),
+    ANALYTICS_RECONCILE_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+    ANALYTICS_OUTBOX_ALERT_THRESHOLD: z.coerce.number().int().positive().default(100),
+    YANDEX_METRIKA_COUNTER_ID: z.coerce.number().int().positive().optional(),
+    YANDEX_OAUTH_TOKEN: z.string().min(1).optional(),
 
     CORS_ORIGINS: CorsOrigins,
 
@@ -57,7 +69,23 @@ const EnvSchema = z
         'LEAD_NOTIFICATION_URL and LEAD_NOTIFICATION_SECRET must both be set or both be empty',
       path: ['LEAD_NOTIFICATION_URL'],
     },
-  );
+  )
+  .superRefine((value, ctx) => {
+    if (!value.ANALYTICS_ENABLED) return;
+    for (const [name, configured] of [
+      ['BITRIX24_PORTAL_ID', value.BITRIX24_PORTAL_ID],
+      ['YANDEX_METRIKA_COUNTER_ID', value.YANDEX_METRIKA_COUNTER_ID],
+      ['YANDEX_OAUTH_TOKEN', value.YANDEX_OAUTH_TOKEN],
+    ] as const) {
+      if (configured == null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${name} is required when ANALYTICS_ENABLED=true`,
+          path: [name],
+        });
+      }
+    }
+  });
 
 export type Env = z.infer<typeof EnvSchema>;
 

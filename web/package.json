@@ -9,18 +9,19 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node -e \"require('node:fs').cpSync('src/services/sessions/migrations','dist/services/sessions/migrations',{recursive:true})\"",
     "start": "node dist/main.js",
     "dev": "tsx watch src/main.ts",
     "crm:schema": "tsx src/tools/crm-schema.ts",
+    "db:migrate": "node dist/tools/db-migrate.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@hono/node-server": "^1.13.7",
+    "@hono/node-server": "^1.19.17",
     "better-sqlite3": "^11.7.0",
-    "hono": "^4.6.14",
+    "hono": "^4.13.5",
     "pino": "^9.5.0",
     "zod": "^3.23.8"
   },

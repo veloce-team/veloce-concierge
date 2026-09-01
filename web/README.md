@@ -58,3 +58,39 @@ read-only dry-run. `--apply` создаёт только отсутствующ�
 BITRIX24_WEBHOOK_URL='…' npm run crm:schema
 BITRIX24_WEBHOOK_URL='…' npm run crm:schema -- --apply
 ```
+
+## Offline analytics worker
+
+Executable module/event/SQLite/API contract, TDD matrix and controlled E2E cleanup plan:
+[`docs/offline-analytics-contract-v1.md`](docs/offline-analytics-contract-v1.md).
+
+При `ANALYTICS_ENABLED=true` сервис каждые пять минут перечитывает tracked-сделки
+и их `crm.stagehistory.list`, формирует только разрешённые milestones
+`qualified_lead`/`won_deal` и доставляет один обновляемый заказ через Yandex
+Metrika Simple Orders API. Категории `10` (Фриланс) и `12` (test) исключены.
+Revenue становится активным после исторически достигнутого `C2/C4/C6:FINAL_INVOICE`,
+но не снапшотится: каждый poll использует текущие `OPPORTUNITY` и `CURRENCY_ID`,
+а изменение суммы обновляет тот же order. Outbox хранит одну latest desired delivery
+на order id и отдельно текущий in-flight upload. После crash `sending` безопасно
+повторяется с тем же deterministic order id; если desired payload изменилась во
+время отправки, новая версия остаётся dirty до terminal read-back предыдущей.
+Даже clean payload повторно сверяется раз в сутки, чтобы late provider processing
+в итоге сходилось к текущему состоянию Bitrix24.
+Read-back обрабатывает не более одной страницы истории на заказ за tick и сохраняет
+`datetime_offset` в SQLite, поэтому поиск exact `uploading_id` продолжается без
+фиксированного cap. Успех требует `api_validation_status=PASSED` и ровно один
+элемент; непроходящий cursor и неизвестный статус завершаются fail-closed.
+PII в analytics state/outbox не сохраняется.
+
+Миграции выполняются отдельным deployment gate; обычный runtime только проверяет
+точную версию и целостность схемы:
+
+```bash
+npm run build
+npm run db:migrate -- /path/to/web.sqlite
+npm start
+```
+
+Сначала миграция репетируется на SQLite Backup API snapshot. Worker активируется
+только после создания CRM-целей и установки `BITRIX24_PORTAL_ID`,
+`YANDEX_METRIKA_COUNTER_ID`, `YANDEX_OAUTH_TOKEN`.
