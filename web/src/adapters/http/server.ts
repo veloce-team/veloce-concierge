@@ -9,6 +9,7 @@ export type ServerHandlers = {
   leadV1?: (c: Context) => Promise<Response> | Response;
   leadMaxbot: (c: Context) => Promise<Response> | Response;
   health: (c: Context) => Response;
+  readiness?: (c: Context) => Response;
 };
 
 export type ServerConfig = {
@@ -40,6 +41,7 @@ export function createServer(
   });
 
   app.get('/health', handlers.health);
+  if (handlers.readiness) app.get('/ready', handlers.readiness);
   app.post('/api/lead', rateLimit, handlers.lead);
   if (handlers.leadV1) app.post('/api/lead/v1', rateLimit, handlers.leadV1);
   app.post('/api/lead/maxbot', rateLimit, handlers.leadMaxbot);

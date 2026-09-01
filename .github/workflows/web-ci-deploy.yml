@@ -1,0 +1,146 @@
+name: web-ci-deploy
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: concierge-web-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Verify packaged migration CLI
+        run: |
+          test -f dist/tools/db-migrate.js
+          test -f dist/services/sessions/migrations/003-offline-analytics.sql
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Upload immutable source release
+        uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          source: "docker-compose.yml,web/package.json,web/package-lock.json,web/tsconfig.json,web/Dockerfile,web/src/**"
+          target: "/opt/veloce-concierge/releases/${{ github.sha }}"
+          rm: true
+      - name: Rehearse migration and promote concierge-web
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          script: |
+            set -eu
+            BASE=/opt/veloce-concierge
+            SHA=${{ github.sha }}
+            RELEASE="$BASE/releases/$SHA"
+            CURRENT="$BASE/current"
+            BACKUPS="$BASE/backups"
+            PROJECT=veloce-concierge
+
+            exec 9>"$BASE/.deploy.lock"
+            flock -n 9
+
+            test -f "$RELEASE/web/package-lock.json"
+            test -f "$RELEASE/web/src/services/sessions/migrations/003-offline-analytics.sql"
+            test -f "$BASE/web/.env"
+            chmod 600 "$BASE/web/.env"
+            ln -sfn "$BASE/web/.env" "$RELEASE/web/.env"
+            mkdir -p "$BACKUPS"
+            chmod 700 "$BACKUPS"
+
+            docker compose -p "$PROJECT" -f "$RELEASE/docker-compose.yml" build concierge-web
+            IMAGE="$(docker compose -p "$PROJECT" -f "$RELEASE/docker-compose.yml" images -q concierge-web)"
+            test -n "$IMAGE"
+
+            SNAP_IN_VOLUME="/data/pre-$SHA.sqlite"
+            docker exec veloce-concierge-web node -e "const D=require('better-sqlite3');const d=new D('/data/web.sqlite',{readonly:true});d.backup('$SNAP_IN_VOLUME').then(()=>d.close())"
+            docker cp "veloce-concierge-web:$SNAP_IN_VOLUME" "$BACKUPS/web-$SHA.sqlite"
+            docker exec veloce-concierge-web rm -f "$SNAP_IN_VOLUME"
+            cp "$BACKUPS/web-$SHA.sqlite" "$BACKUPS/web-$SHA.rehearsal.sqlite"
+            chown 1000:1000 "$BACKUPS/web-$SHA.rehearsal.sqlite"
+            docker run --rm --network none --user node \
+              -v "$BACKUPS/web-$SHA.rehearsal.sqlite:/data/web.sqlite" \
+              "$IMAGE" node dist/tools/db-migrate.js /data/web.sqlite
+
+            PREVIOUS="$BASE"
+            HAD_CURRENT=0
+            if test -L "$CURRENT"; then
+              HAD_CURRENT=1
+              PREVIOUS="$(readlink -f "$CURRENT")"
+            fi
+            PREVIOUS_IMAGE="$(docker inspect -f '{{.Image}}' veloce-concierge-web)"
+            test -n "$PREVIOUS_IMAGE"
+
+            ROLLBACK_SMOKE="veloce-rollback-smoke-$SHA"
+            trap 'docker rm -f "$ROLLBACK_SMOKE" >/dev/null 2>&1 || true' EXIT
+            docker run -d --rm --name "$ROLLBACK_SMOKE" --network none \
+              --env-file "$BASE/web/.env" \
+              -v "$BACKUPS/web-$SHA.rehearsal.sqlite:/data/web.sqlite" \
+              "$PREVIOUS_IMAGE"
+            for attempt in $(seq 1 15); do
+              if docker exec "$ROLLBACK_SMOKE" wget -qO- http://127.0.0.1:3000/health >/dev/null; then
+                break
+              fi
+              test "$attempt" -lt 15
+              sleep 1
+            done
+            docker rm -f "$ROLLBACK_SMOKE" >/dev/null
+            trap - EXIT
+
+            rollback() {
+              if test "$HAD_CURRENT" = 1; then
+                ln -sfn "$PREVIOUS" "$BASE/current.rollback"
+                mv -Tf "$BASE/current.rollback" "$CURRENT"
+              else
+                rm -f "$CURRENT"
+              fi
+              docker compose -p "$PROJECT" -f "$PREVIOUS/docker-compose.yml" up -d --no-deps concierge-web || true
+            }
+            trap rollback EXIT
+
+            docker compose -p "$PROJECT" -f "$PREVIOUS/docker-compose.yml" stop concierge-web
+            docker run --rm --network none --user node \
+              -v "${PROJECT}_web_data:/data" \
+              "$IMAGE" node dist/tools/db-migrate.js /data/web.sqlite
+
+            ln -sfn "releases/$SHA" "$BASE/current.next"
+            mv -Tf "$BASE/current.next" "$CURRENT"
+            test "$(readlink "$CURRENT")" = "releases/$SHA"
+            docker compose -p "$PROJECT" -f "$CURRENT/docker-compose.yml" up -d --no-deps concierge-web
+
+            for attempt in $(seq 1 30); do
+              if curl -fsS --max-time 5 https://api.veloce.team/ready >/dev/null; then
+                break
+              fi
+              test "$attempt" -lt 30
+              sleep 2
+            done
+            test "$(docker inspect -f '{{.Image}}' veloce-concierge-web)" = "$IMAGE"
+            docker exec veloce-concierge-web node -e "const D=require('better-sqlite3');const d=new D('/data/web.sqlite',{readonly:true});if(d.pragma('user_version',{simple:true})!==3)process.exit(1);if(d.pragma('integrity_check',{simple:true})!=='ok')process.exit(1);d.close()"
+            trap - EXIT

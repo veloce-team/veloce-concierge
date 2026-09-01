@@ -19,6 +19,7 @@ services:
     build: ./web
     container_name: veloce-concierge-web
     restart: unless-stopped
+    stop_grace_period: 35s
     env_file: ./web/.env
     volumes:
       - web_data:/data
