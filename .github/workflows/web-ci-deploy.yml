@@ -138,7 +138,7 @@ jobs:
             docker compose -p "$PROJECT" -f "$CURRENT/docker-compose.yml" up -d --no-deps concierge-web
 
             for attempt in $(seq 1 30); do
-              if curl -fsS --max-time 5 https://api.veloce.team/ready >/dev/null; then
+              if docker exec veloce-concierge-web wget -qO- http://127.0.0.1:3000/ready >/dev/null; then
                 break
               fi
               test "$attempt" -lt 30
