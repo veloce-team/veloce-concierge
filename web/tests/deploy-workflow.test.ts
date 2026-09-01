@@ -52,6 +52,11 @@ describe('stateful deploy workflow safety contract', () => {
     expect(candidateBuild).toBeGreaterThan(freezeRollbackImage);
   });
 
+  it('resolves the candidate image from the freshly built tag, not the stale running container', () => {
+    expect(workflow).toContain('IMAGE="$(docker image inspect -f \'{{.Id}}\' "$CANDIDATE_TAG")"');
+    expect(workflow).not.toContain('images -q concierge-web');
+  });
+
   it('proves the previous image can start against the migrated rehearsal database before rollback is armed', () => {
     const oldImageSmoke = workflow.indexOf('"$PREVIOUS_IMAGE"');
     const healthProbe = workflow.indexOf('docker exec "$ROLLBACK_SMOKE" wget');
