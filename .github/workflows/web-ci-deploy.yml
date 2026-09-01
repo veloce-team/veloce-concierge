@@ -86,7 +86,7 @@ jobs:
             docker build --tag "$PREVIOUS_IMAGE" "$PREVIOUS/web"
 
             docker compose -p "$PROJECT" -f "$RELEASE/docker-compose.yml" build concierge-web
-            IMAGE="$(docker compose -p "$PROJECT" -f "$RELEASE/docker-compose.yml" images -q concierge-web)"
+            IMAGE="$(docker image inspect -f '{{.Id}}' "$CANDIDATE_TAG")"
             test -n "$IMAGE"
 
             SNAP_IN_VOLUME="/data/pre-$SHA.sqlite"
