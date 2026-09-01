@@ -6,6 +6,7 @@ import { createRateLimit } from './middleware/rate-limit.js';
 
 export type ServerHandlers = {
   lead: (c: Context) => Promise<Response> | Response;
+  leadV1?: (c: Context) => Promise<Response> | Response;
   leadMaxbot: (c: Context) => Promise<Response> | Response;
   health: (c: Context) => Response;
 };
@@ -40,6 +41,7 @@ export function createServer(
 
   app.get('/health', handlers.health);
   app.post('/api/lead', rateLimit, handlers.lead);
+  if (handlers.leadV1) app.post('/api/lead/v1', rateLimit, handlers.leadV1);
   app.post('/api/lead/maxbot', rateLimit, handlers.leadMaxbot);
 
   app.notFound((c) => c.json({ status: 'not_found' }, 404));

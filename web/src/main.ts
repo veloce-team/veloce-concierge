@@ -1,6 +1,7 @@
 import { parseEnv } from './config/env.js';
 import { createHealthHandler } from './adapters/http/routes/health.js';
 import { createLeadHandler } from './adapters/http/routes/lead.js';
+import { createLeadV1Handler } from './adapters/http/routes/lead-v1.js';
 import { createServer, startServer } from './adapters/http/server.js';
 import { startCleanupJob } from './infra/cleanup.js';
 import { createLogger } from './infra/logger.js';
@@ -73,8 +74,14 @@ async function main(): Promise<void> {
     expectedSource: 'maxbot_pro',
   });
 
+  const leadV1 = createLeadV1Handler({
+    outbox,
+    worker,
+    logger: logger.child({ component: 'lead-v1' }),
+  });
+
   const app = createServer(
-    { lead, leadMaxbot, health: createHealthHandler(startedAtMs) },
+    { lead, leadV1, leadMaxbot, health: createHealthHandler(startedAtMs) },
     {
       corsOrigins: env.CORS_ORIGINS,
       rateLimitWindowMs: env.RATE_LIMIT_WINDOW_MS,

@@ -16,11 +16,11 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 
 function makeDb() {
   const db = new Database(':memory:');
-  const sql = readFileSync(
-    join(HERE, '..', 'src/services/sessions/migrations/001-init.sql'),
-    'utf8',
-  );
-  db.exec(sql);
+  for (const migration of ['001-init.sql', '002-lead-event-id.sql']) {
+    db.exec(
+      readFileSync(join(HERE, '..', 'src/services/sessions/migrations', migration), 'utf8'),
+    );
+  }
   return db;
 }
 
