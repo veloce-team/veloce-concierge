@@ -67,8 +67,11 @@ describe('stateful deploy workflow safety contract', () => {
     expect(workflow).toContain('web-$SHA.rehearsal.sqlite:/data/web.sqlite');
   });
 
-  it('waits for application readiness and gives managed shutdown enough time to drain', () => {
-    expect(workflow).toContain('https://api.veloce.team/ready');
+  it('waits for internal application readiness and gives managed shutdown enough time to drain', () => {
+    expect(workflow).toContain(
+      'docker exec veloce-concierge-web wget -qO- http://127.0.0.1:3000/ready',
+    );
+    expect(workflow).not.toContain('https://api.veloce.team/ready');
     expect(compose).toContain('stop_grace_period: 35s');
   });
 });
