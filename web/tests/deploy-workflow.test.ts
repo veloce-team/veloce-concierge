@@ -38,8 +38,18 @@ describe('stateful deploy workflow safety contract', () => {
       'ln -sfn "$PREVIOUS" "$BASE/current.rollback"\n                mv -Tf "$BASE/current.rollback" "$CURRENT"',
     );
     expect(workflow.slice(rollbackDefinition, rollbackTrap)).toContain(
-      'docker compose -p "$PROJECT" -f "$PREVIOUS/docker-compose.yml" up -d --no-deps concierge-web',
+      'docker image tag "$PREVIOUS_IMAGE" "$CANDIDATE_TAG"',
     );
+    expect(workflow.slice(rollbackDefinition, rollbackTrap)).toContain(
+      'docker compose -p "$PROJECT" -f "$PREVIOUS/docker-compose.yml" up -d --no-deps --force-recreate concierge-web',
+    );
+  });
+
+  it('freezes a runnable rollback image before the candidate replaces the compose tag', () => {
+    const freezeRollbackImage = workflow.indexOf('docker image tag "$RUNNING_IMAGE" "$PREVIOUS_IMAGE"');
+    const candidateBuild = workflow.indexOf('build concierge-web');
+    expect(freezeRollbackImage).toBeGreaterThan(0);
+    expect(candidateBuild).toBeGreaterThan(freezeRollbackImage);
   });
 
   it('proves the previous image can start against the migrated rehearsal database before rollback is armed', () => {

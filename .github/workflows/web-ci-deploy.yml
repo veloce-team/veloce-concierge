@@ -62,6 +62,8 @@ jobs:
             CURRENT="$BASE/current"
             BACKUPS="$BASE/backups"
             PROJECT=veloce-concierge
+            CANDIDATE_TAG="${PROJECT}-concierge-web:latest"
+            PREVIOUS_IMAGE="${PROJECT}-rollback:$SHA"
 
             exec 9>"$BASE/.deploy.lock"
             flock -n 9
@@ -73,6 +75,10 @@ jobs:
             ln -sfn "$BASE/web/.env" "$RELEASE/web/.env"
             mkdir -p "$BACKUPS"
             chmod 700 "$BACKUPS"
+
+            RUNNING_IMAGE="$(docker inspect -f '{{.Image}}' veloce-concierge-web)"
+            test -n "$RUNNING_IMAGE"
+            docker image tag "$RUNNING_IMAGE" "$PREVIOUS_IMAGE"
 
             docker compose -p "$PROJECT" -f "$RELEASE/docker-compose.yml" build concierge-web
             IMAGE="$(docker compose -p "$PROJECT" -f "$RELEASE/docker-compose.yml" images -q concierge-web)"
@@ -94,9 +100,6 @@ jobs:
               HAD_CURRENT=1
               PREVIOUS="$(readlink -f "$CURRENT")"
             fi
-            PREVIOUS_IMAGE="$(docker inspect -f '{{.Image}}' veloce-concierge-web)"
-            test -n "$PREVIOUS_IMAGE"
-
             ROLLBACK_SMOKE="veloce-rollback-smoke-$SHA"
             trap 'docker rm -f "$ROLLBACK_SMOKE" >/dev/null 2>&1 || true' EXIT
             docker run -d --rm --name "$ROLLBACK_SMOKE" --network none \
@@ -120,7 +123,8 @@ jobs:
               else
                 rm -f "$CURRENT"
               fi
-              docker compose -p "$PROJECT" -f "$PREVIOUS/docker-compose.yml" up -d --no-deps concierge-web || true
+              docker image tag "$PREVIOUS_IMAGE" "$CANDIDATE_TAG" || true
+              docker compose -p "$PROJECT" -f "$PREVIOUS/docker-compose.yml" up -d --no-deps --force-recreate concierge-web || true
             }
             trap rollback EXIT
 
