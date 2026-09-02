@@ -143,12 +143,27 @@ Concrete goals mapping: `GET|POST /management/v1/counter/{counterId}/goals`, OAu
 
 Детерминированные fixtures: `tests/fixtures/offline-analytics.ts`.
 
-## Контролируемый E2E (отдельный gate)
+## Контролируемый E2E и cleanup contract
 
-1. Preconditions: source/build/tests/deploy gates green; schema migration `3→4` rehearsed на свежей production-копии и empty-delivery guard подтверждён; goals created and exact-read-back; worker limits/alerts enabled; paid traffic remains off.
-2. Создать одну явно помеченную test deal с synthetic ClientID, сохранить все созданные CRM IDs.
-3. Выполнить Bitrix24 copy-transition `root category 0 → target category 2|4|6`, проверить общий `UF_CRM_1780724113`, повторный poll ×10, restart, FINAL_INVOICE и WON на target deal; подтвердить один root order id, semantic uniqueness, terminal Yandex read-back и отсутствие PII.
-4. В `finally` удалить/закрыть только записанные test IDs, убрать связанные local ledger/outbox rows через отдельную scoped cleanup-команду, затем read-back подтвердить отсутствие тестовых данных.
-5. Любая ошибка cleanup — NO-GO и ручная эскалация с точными test IDs. Production rows не редактировать.
+1. Preconditions: source/build/tests/deploy gates green; migration rehearsed на production snapshot; goals exact-read-back; limits/alerts enabled; paid traffic off.
+2. Создать одну явно помеченную test lineage с synthetic attribution и заранее сохранить CRM IDs/identity guards.
+3. Провести copy-transition через allowed category, `FINAL_INVOICE` и `WON`; подтвердить один root order, semantic uniqueness, terminal Yandex read-back и отсутствие PII/physical-key leakage.
+4. В `finally` удалить только CRM objects, прошедшие exact marker/attribution/lineage/contact guards, и повторным CRM read-back подтвердить их отсутствие.
+5. Immutable production analytics ledger/outbox/order evidence после E2E **не удалять и не редактировать вручную**. Оно является audit trail terminal provider delivery. Любая ошибка CRM cleanup — NO-GO и ручная эскалация с точными test IDs.
 
-Этот документ не выполняет E2E и не разрешает live mutation.
+### Выполненный production E2E — 2026-09-02
+
+- live form → exact CRM attribution → copied lineage `206→208`;
+- один order `b24:veloce.bitrix24.ru:deal:206`;
+- `qualified_lead → FINAL_INVOICE → won_deal`, revenue `123456.78 RUB`;
+- три Yandex uploads: `api_validation_status=PASSED`, один element каждый;
+- physical descendant rows: state/event/outbox `0/0/0`;
+- test deals/contact удалены по identity guard; immutable analytics evidence сохранено;
+- runtime после cleanup: `/ready=true`, issues empty, backlog 0.
+
+Evidence: Kanban `t_c872991c`; sanitized artifact
+`/root/review-artifacts/veloce-full-e2e-final-20260902.json`, SHA-256
+`c60c3b105435aea76fca0bf5786e508ebe0b2062efeaf18ccdf8449046aaef63`.
+
+Этот документ фиксирует contract/status, но не разрешает новые live mutations,
+paid traffic или Direct campaign changes.
