@@ -25,7 +25,7 @@ describe('stateful deploy workflow safety contract', () => {
     const firstMutation = workflow.indexOf('chmod 600 "$BASE/web/.env"');
     const rollbackDefinition = workflow.indexOf('rollback() {');
     const rollbackTrap = workflow.indexOf('trap rollback EXIT');
-    const stopRuntime = workflow.indexOf('stop concierge-web');
+    const stopRuntime = workflow.indexOf('stop concierge-web', rollbackTrap);
     const promoteLink = workflow.indexOf('mv -Tf "$BASE/current.next" "$CURRENT"');
     expect(lockOpen).toBeGreaterThan(0);
     expect(lockAcquire).toBeGreaterThan(lockOpen);
@@ -57,14 +57,56 @@ describe('stateful deploy workflow safety contract', () => {
     expect(workflow).not.toContain('images -q concierge-web');
   });
 
-  it('proves the previous image can start against the migrated rehearsal database before rollback is armed', () => {
-    const oldImageSmoke = workflow.indexOf('"$PREVIOUS_IMAGE"');
+  it('proves the previous image can start against the pre-migration rollback database before rollback is armed', () => {
+    const rollbackCopy = workflow.indexOf(
+      'cp "$BACKUPS/web-$SHA.sqlite" "$BACKUPS/web-$SHA.rollback.sqlite"',
+    );
+    const smokeStart = workflow.indexOf('docker run -d --rm --name "$ROLLBACK_SMOKE"');
+    const smokeEnd = workflow.indexOf('for attempt in $(seq 1 15)', smokeStart);
+    const smokeBlock = workflow.slice(smokeStart, smokeEnd);
+    const rollbackMount = smokeBlock.indexOf('web-$SHA.rollback.sqlite:/data/web.sqlite');
+    const oldImage = smokeBlock.indexOf('"$PREVIOUS_IMAGE"');
     const healthProbe = workflow.indexOf('docker exec "$ROLLBACK_SMOKE" wget');
     const rollbackTrap = workflow.indexOf('trap rollback EXIT');
-    expect(oldImageSmoke).toBeGreaterThan(0);
-    expect(healthProbe).toBeGreaterThan(oldImageSmoke);
+    expect(rollbackCopy).toBeGreaterThan(0);
+    expect(smokeStart).toBeGreaterThan(rollbackCopy);
+    expect(smokeEnd).toBeGreaterThan(smokeStart);
+    expect(rollbackMount).toBeGreaterThan(0);
+    expect(oldImage).toBeGreaterThan(rollbackMount);
+    expect(healthProbe).toBeGreaterThan(smokeEnd);
     expect(rollbackTrap).toBeGreaterThan(healthProbe);
-    expect(workflow).toContain('web-$SHA.rehearsal.sqlite:/data/web.sqlite');
+  });
+
+  it('packages and verifies schema v4 and restores the pre-migration database before rollback restart', () => {
+    expect(workflow).toContain('dist/services/sessions/migrations/004-lineage-root.sql');
+    expect(workflow).toContain('src/services/sessions/migrations/004-lineage-root.sql');
+    expect(workflow).toContain("!==4");
+    const rollbackDefinition = workflow.indexOf('rollback() {');
+    const rollbackTrap = workflow.indexOf('trap rollback EXIT');
+    const rollbackBody = workflow.slice(rollbackDefinition, rollbackTrap);
+    const inspectBeforeStop = rollbackBody.indexOf('docker inspect veloce-concierge-web >/dev/null');
+    const stop = rollbackBody.indexOf('docker stop -t 35 veloce-concierge-web');
+    const verifyStopped = rollbackBody.indexOf("'{{.State.Running}}' veloce-concierge-web");
+    const restoreSymlink = rollbackBody.indexOf('mv -Tf "$BASE/current.rollback" "$CURRENT"');
+    const removeSymlink = rollbackBody.indexOf('rm -f "$CURRENT"');
+    const volumeMount = rollbackBody.indexOf('-v "${PROJECT}_web_data:/data"');
+    const restoreSource = rollbackBody.indexOf("new D('/backup/web-$SHA.sqlite',{readonly:true})");
+    const restore = rollbackBody.indexOf("source.backup('/data/web.sqlite')");
+    const retag = rollbackBody.indexOf('docker image tag "$PREVIOUS_IMAGE" "$CANDIDATE_TAG"');
+    const restart = rollbackBody.indexOf('up -d --no-deps --force-recreate concierge-web');
+    expect(inspectBeforeStop).toBeGreaterThan(0);
+    expect(stop).toBeGreaterThan(inspectBeforeStop);
+    expect(verifyStopped).toBeGreaterThan(stop);
+    expect(restoreSymlink).toBeGreaterThan(verifyStopped);
+    expect(removeSymlink).toBeGreaterThan(restoreSymlink);
+    expect(volumeMount).toBeGreaterThan(removeSymlink);
+    expect(restoreSource).toBeGreaterThan(volumeMount);
+    expect(restore).toBeGreaterThan(restoreSource);
+    expect(retag).toBeGreaterThan(restore);
+    expect(restart).toBeGreaterThan(retag);
+    expect(rollbackBody).not.toContain('stop concierge-web || true');
+    expect(rollbackBody).not.toContain('if docker inspect');
+    expect(rollbackBody).not.toContain('|| printf false');
   });
 
   it('waits for internal application readiness and gives managed shutdown enough time to drain', () => {
