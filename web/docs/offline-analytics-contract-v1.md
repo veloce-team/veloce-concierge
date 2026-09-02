@@ -113,6 +113,20 @@ Concrete goals mapping: `GET|POST /management/v1/counter/{counterId}/goals`, OAu
 
 Одна latest-state строка загружается одним CSV и одним upload id. Worker забирает не более 10 строк за tick; официальный file-size cap 1 GB проверяется до HTTP. HTTP `420`, `429`, `5xx` и transport failures повторяются с durable backoff, остальные `4xx`, malformed/unknown status и неверный `elements_count` terminal. Provider response body и transport exception text не попадают в durable errors/логи; quota exhaustion, backlog/dead rows и attribution-window expiry дают структурированные alerts без payload.
 
+### Operational readiness and limits
+
+Публичный `GET https://api.veloce.team/ready` содержит только bounded operational state без OAuth/webhook/PII и возвращает `503`, если выполняется хотя бы одно условие:
+
+- последний успешный poll старше 15 минут, upload старше 5 минут или reconciliation старше 10 минут;
+- последний завершившийся запуск стадии завершился ошибкой;
+- outbox содержит `retry`, `dead` или `unmatchable`, либо deliverable backlog достиг 5 строк;
+- текущий poll обнаружил semantic/lineage alert;
+- Yandex вернул quota status `420`/`429`.
+
+Ответ ограничен полями `ready`, `status` и `analytics`: фиксированные issue codes, три timestamp последнего успеха, агрегированные counts только известных outbox-статусов и активные limits. Payload, error text, произвольные статусы/коды, идентификаторы, OAuth/webhook и контактные данные отбрасываются на HTTP-границе.
+
+Внешний Uptime Kuma проверяет `/ready` каждые 60 секунд с двумя retries и timeout 15 секунд. Telegram-инцидент принимается только после controlled `DOWN → RECOVERY`; liveness `/health` остаётся независимой проверкой процесса.
+
 ## TDD-матрица
 
 | Контракт | Executable evidence |

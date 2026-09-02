@@ -53,6 +53,7 @@ describe('offline analytics worker orchestration', () => {
           calls.push('reconcile');
           return [];
         }),
+        countByStatus: vi.fn().mockReturnValue({}),
       } as any,
       yandex: {} as any,
       logger: logger(),
@@ -577,17 +578,18 @@ describe('offline analytics worker orchestration', () => {
     }
   });
 
-  it('emits a structured alert when Yandex reports quota exhaustion', async () => {
+  it.each([420, 429])('emits a structured alert when Yandex reports quota exhaustion (%s)', async (status) => {
     const warn = vi.fn();
     const repository = {
       claimDue: vi.fn().mockReturnValue([record]), hasProcessedOrder: vi.fn().mockReturnValue(false),
       markAccepted: vi.fn(), markRetry: vi.fn(), markDead: vi.fn(), markUnmatchable: vi.fn(),
+      countByStatus: vi.fn().mockReturnValue({ clean: 1 }),
     } as any;
     const worker = createAnalyticsWorker({
       bitrix: {} as any,
       repository,
       yandex: { upload: vi.fn().mockRejectedValue(
-        new YandexApiError('Yandex API request failed with status 420', true, 420),
+        new YandexApiError(`Yandex API request failed with status ${status}`, true, status),
       ) } as any,
       logger: { warn, error: vi.fn(), info: vi.fn() } as any,
       now: () => 3_000,
@@ -596,9 +598,10 @@ describe('offline analytics worker orchestration', () => {
     await worker.tickUpload();
     expect(repository.markRetry).toHaveBeenCalledOnce();
     expect(warn).toHaveBeenCalledWith(
-      { outbox_id: 1, status: 420 },
+      { outbox_id: 1, status },
       'analytics: Yandex quota exhausted',
     );
+    expect(worker.health().issues).toContain('provider:quota_exhausted');
   });
 
   it('isolates partial failures between records in the bounded upload batch', async () => {
@@ -672,6 +675,305 @@ describe('offline analytics worker orchestration', () => {
       expect.objectContaining({ deliverable_backlog: 6, dead: 1 }),
       'analytics: outbox alert threshold exceeded',
     );
+  });
+
+  it('exposes current lineage alerts and clears them after a clean poll', async () => {
+    const orphan = { ...deal, dealId: '204', sourceDealId: '202' };
+    const listTrackedDeals = vi.fn().mockResolvedValueOnce([orphan]).mockResolvedValueOnce([]);
+    const repository = {
+      getState: vi.fn().mockReturnValue({}),
+      applyTransition: vi.fn().mockReturnValue({ eventCount: 0, outboxCreated: false }),
+      countByStatus: vi.fn().mockReturnValue({ clean: 1 }),
+    } as any;
+    const worker = createAnalyticsWorker({
+      bitrix: { listTrackedDeals } as any,
+      repository,
+      yandex: {} as any,
+      logger: logger(),
+      now: () => 1_000,
+    });
+
+    await worker.tickPoll();
+    expect(worker.health().issues).toContain('semantic:lineage_root_missing');
+
+    await worker.tickPoll();
+    expect(worker.health().issues).not.toContain('semantic:lineage_root_missing');
+  });
+
+  it('projects dynamic semantic alerts to bounded public issue codes', async () => {
+    const root = {
+      ...deal,
+      dealId: '202', sourceDealId: '202', categoryId: '0', stageId: 'WON',
+      createdAt: '2026-09-01T09:00:00Z', modifiedAt: '2026-09-01T09:00:00Z',
+    };
+    const unknown = {
+      ...deal,
+      dealId: '204', sourceDealId: '202', categoryId: '987654321', stageId: 'CUSTOM:FREE_TEXT',
+      createdAt: '2026-09-02T09:00:00Z', modifiedAt: '2026-09-02T09:00:00Z',
+    };
+    const worker = createAnalyticsWorker({
+      bitrix: {
+        listTrackedDeals: vi.fn().mockResolvedValue([root, unknown]),
+        getStageHistory: vi.fn((dealId: string) => Promise.resolve([{
+          id: dealId,
+          categoryId: dealId === '202' ? '0' : '987654321',
+          stageId: dealId === '202' ? 'NEW' : 'CUSTOM:FREE_TEXT',
+          createdAt: dealId === '202' ? root.createdAt : unknown.createdAt,
+        }])),
+      },
+      repository: {
+        getState: vi.fn().mockReturnValue({}),
+        applyTransition: vi.fn().mockReturnValue({ eventCount: 0, outboxCreated: false }),
+        countByStatus: vi.fn().mockReturnValue({}),
+      } as any,
+      yandex: {} as any,
+      logger: logger(),
+      now: () => 1_000,
+    });
+
+    await worker.tickPoll();
+
+    expect(worker.health().issues).toContain('semantic:unknown_category');
+    expect(worker.health().issues.join(' ')).not.toContain('987654321');
+    expect(worker.health().issues.join(' ')).not.toContain('CUSTOM:FREE_TEXT');
+  });
+
+  it('makes operational readiness fail on a persistent retry row', async () => {
+    const repository = {
+      claimDue: vi.fn().mockReturnValue([]),
+      listAccepted: vi.fn().mockReturnValue([]),
+      countByStatus: vi.fn().mockReturnValue({ retry: 1, clean: 2 }),
+    } as any;
+    const worker = createAnalyticsWorker({
+      bitrix: { listTrackedDeals: vi.fn().mockResolvedValue([]) } as any,
+      repository,
+      yandex: {} as any,
+      logger: logger(),
+      now: () => 1_000,
+      outboxAlertThreshold: 5,
+    });
+
+    worker.start();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(worker.health()).toMatchObject({
+      ready: false,
+      issues: ['outbox:retry'],
+      outbox: { deliverableBacklog: 1, terminal: 0, counts: { retry: 1, clean: 2 } },
+    });
+    await worker.stop();
+  });
+
+  it('makes operational readiness fail on dead or unmatchable rows', async () => {
+    const repository = {
+      claimDue: vi.fn().mockReturnValue([]),
+      listAccepted: vi.fn().mockReturnValue([]),
+      countByStatus: vi.fn().mockReturnValue({ dead: 1, unmatchable: 1 }),
+    } as any;
+    const worker = createAnalyticsWorker({
+      bitrix: { listTrackedDeals: vi.fn().mockResolvedValue([]) } as any,
+      repository,
+      yandex: {} as any,
+      logger: logger(),
+      now: () => 1_000,
+    });
+
+    worker.start();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(worker.health()).toMatchObject({
+      ready: false,
+      issues: ['outbox:terminal'],
+      outbox: { terminal: 2 },
+    });
+    await worker.stop();
+  });
+
+  it('makes operational readiness fail when deliverable backlog reaches five rows', async () => {
+    const repository = {
+      claimDue: vi.fn().mockReturnValue([]),
+      listAccepted: vi.fn().mockReturnValue([]),
+      countByStatus: vi.fn().mockReturnValue({ dirty: 2, sending: 1, accepted: 2 }),
+    } as any;
+    const worker = createAnalyticsWorker({
+      bitrix: { listTrackedDeals: vi.fn().mockResolvedValue([]) } as any,
+      repository,
+      yandex: {} as any,
+      logger: logger(),
+      now: () => 1_000,
+      outboxAlertThreshold: 5,
+    });
+
+    worker.start();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(worker.health()).toMatchObject({
+      ready: false,
+      issues: ['outbox:backlog'],
+      outbox: { deliverableBacklog: 5 },
+    });
+    await worker.stop();
+  });
+
+  it('makes operational readiness fail when stage successes become stale', async () => {
+    let current = 1_000;
+    const repository = {
+      claimDue: vi.fn().mockReturnValue([]),
+      listAccepted: vi.fn().mockReturnValue([]),
+      countByStatus: vi.fn().mockReturnValue({ clean: 1 }),
+    } as any;
+    const worker = createAnalyticsWorker({
+      bitrix: { listTrackedDeals: vi.fn().mockResolvedValue([]) } as any,
+      repository,
+      yandex: {} as any,
+      logger: logger(),
+      now: () => current,
+      pollStaleAfterMs: 900_000,
+      uploadStaleAfterMs: 300_000,
+      reconcileStaleAfterMs: 600_000,
+    } as any);
+
+    worker.start();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(worker.health()).toMatchObject({ ready: true, issues: [] });
+
+    current += 900_001;
+    expect(worker.health()).toMatchObject({
+      ready: false,
+      issues: ['stale:poll', 'stale:upload', 'stale:reconcile'],
+    });
+    await worker.stop();
+  });
+
+  it.each([
+    ['poll', 100],
+    ['upload', 200],
+    ['reconcile', 300],
+  ] as const)('uses a strict greater-than stale boundary for %s', async (stage, threshold) => {
+    let current = 1_000;
+    const worker = createAnalyticsWorker({
+      bitrix: { listTrackedDeals: vi.fn().mockResolvedValue([]) } as any,
+      repository: {
+        claimDue: vi.fn().mockReturnValue([]),
+        listAccepted: vi.fn().mockReturnValue([]),
+        countByStatus: vi.fn().mockReturnValue({ clean: 1 }),
+      } as any,
+      yandex: {} as any,
+      logger: logger(),
+      now: () => current,
+      pollStaleAfterMs: stage === 'poll' ? threshold : 10_000,
+      uploadStaleAfterMs: stage === 'upload' ? threshold : 10_000,
+      reconcileStaleAfterMs: stage === 'reconcile' ? threshold : 10_000,
+    });
+
+    await worker.tickPoll();
+    await worker.tickUpload();
+    await worker.tickReconcile();
+    current += threshold;
+    expect(worker.health().issues).not.toContain(`stale:${stage}`);
+    current += 1;
+    expect(worker.health().issues).toContain(`stale:${stage}`);
+  });
+
+  it('keeps a deliverable backlog below five healthy', async () => {
+    const worker = createAnalyticsWorker({
+      bitrix: { listTrackedDeals: vi.fn().mockResolvedValue([]) } as any,
+      repository: {
+        claimDue: vi.fn().mockReturnValue([]),
+        listAccepted: vi.fn().mockReturnValue([]),
+        countByStatus: vi.fn().mockReturnValue({ dirty: 4 }),
+      } as any,
+      yandex: {} as any,
+      logger: logger(),
+      now: () => 1_000,
+      outboxAlertThreshold: 5,
+    });
+
+    await worker.tickPoll();
+    await worker.tickUpload();
+    await worker.tickReconcile();
+    expect(worker.health()).toMatchObject({ ready: true, issues: [], outbox: { deliverableBacklog: 4 } });
+  });
+
+  it.each(['dead', 'unmatchable'] as const)('fails readiness for one %s row', async (status) => {
+    const worker = createAnalyticsWorker({
+      bitrix: { listTrackedDeals: vi.fn().mockResolvedValue([]) } as any,
+      repository: {
+        claimDue: vi.fn().mockReturnValue([]),
+        listAccepted: vi.fn().mockReturnValue([]),
+        countByStatus: vi.fn().mockReturnValue({ [status]: 1 }),
+      } as any,
+      yandex: {} as any,
+      logger: logger(),
+      now: () => 1_000,
+    });
+
+    await worker.tickPoll();
+    await worker.tickUpload();
+    await worker.tickReconcile();
+    expect(worker.health().issues).toContain('outbox:terminal');
+  });
+
+  it('does not refresh poll success while the previous poll is still running', async () => {
+    let resolvePoll!: (deals: AnalyticsDeal[]) => void;
+    const listTrackedDeals = vi.fn().mockReturnValue(new Promise<AnalyticsDeal[]>((resolve) => {
+      resolvePoll = resolve;
+    }));
+    const worker = createAnalyticsWorker({
+      bitrix: { listTrackedDeals } as any,
+      repository: { countByStatus: vi.fn().mockReturnValue({}) } as any,
+      yandex: {} as any,
+      logger: logger(),
+      now: () => 1_000,
+    });
+
+    const first = worker.tickPoll();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await worker.tickPoll();
+    expect(worker.health().lastSuccessAt.poll).toBeNull();
+    expect(worker.health().running.poll).toBe(true);
+
+    resolvePoll([]);
+    await first;
+    expect(worker.health().lastSuccessAt.poll).toBe(1_000);
+  });
+
+  it('reports a failure that follows success within the same millisecond', async () => {
+    const listTrackedDeals = vi.fn().mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('down'));
+    const worker = createAnalyticsWorker({
+      bitrix: { listTrackedDeals } as any,
+      repository: { countByStatus: vi.fn().mockReturnValue({}) } as any,
+      yandex: {} as any,
+      logger: logger(),
+      now: () => 1_000,
+    });
+
+    await worker.tickPoll();
+    await expect(worker.tickPoll()).rejects.toThrow('down');
+    expect(worker.health().issues).toContain('failed:poll');
+  });
+
+  it('keeps readiness failed until a stage succeeds after its latest failure', async () => {
+    let current = 1_000;
+    const listTrackedDeals = vi.fn().mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('down')).mockResolvedValueOnce([]);
+    const repository = {
+      claimDue: vi.fn().mockReturnValue([]),
+      listAccepted: vi.fn().mockReturnValue([]),
+      countByStatus: vi.fn().mockReturnValue({ clean: 1 }),
+    } as any;
+    const worker = createAnalyticsWorker({
+      bitrix: { listTrackedDeals } as any,
+      repository,
+      yandex: {} as any,
+      logger: logger(),
+      now: () => current,
+    });
+
+    await worker.tickPoll();
+    current += 1;
+    await expect(worker.tickPoll()).rejects.toThrow('down');
+    expect(worker.health()).toMatchObject({ ready: false, issues: ['failed:poll'] });
+
+    current += 1;
+    await worker.tickPoll();
+    expect(worker.health().issues).not.toContain('failed:poll');
   });
 
   it('reconciles accepted uploads only after Yandex validation read-back', async () => {

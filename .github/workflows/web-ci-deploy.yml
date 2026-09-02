@@ -46,7 +46,7 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
-          source: "docker-compose.yml,web/package.json,web/package-lock.json,web/tsconfig.json,web/Dockerfile,web/src/**"
+          source: "docker-compose.yml,infra/caddy/Caddyfile,web/package.json,web/package-lock.json,web/tsconfig.json,web/Dockerfile,web/src/**"
           target: "/opt/veloce-concierge/releases/${{ github.sha }}"
           rm: true
       - name: Rehearse migration and promote concierge-web
@@ -72,11 +72,16 @@ jobs:
             test -f "$RELEASE/web/package-lock.json"
             test -f "$RELEASE/web/src/services/sessions/migrations/003-offline-analytics.sql"
             test -f "$RELEASE/web/src/services/sessions/migrations/004-lineage-root.sql"
+            test -f "$RELEASE/infra/caddy/Caddyfile"
+            test -f "$BASE/infra/caddy/Caddyfile"
             test -f "$BASE/web/.env"
             chmod 600 "$BASE/web/.env"
             ln -sfn "$BASE/web/.env" "$RELEASE/web/.env"
             mkdir -p "$BACKUPS"
             chmod 700 "$BACKUPS"
+            docker run --rm --network none \
+              -v "$RELEASE/infra/caddy:/candidate:ro" \
+              caddy:2-alpine caddy validate --config /candidate/Caddyfile
 
             PREVIOUS="$BASE"
             HAD_CURRENT=0
@@ -110,7 +115,7 @@ jobs:
               -v "$BACKUPS/web-$SHA.rollback.sqlite:/data/web.sqlite" \
               "$PREVIOUS_IMAGE"
             for attempt in $(seq 1 15); do
-              if docker exec "$ROLLBACK_SMOKE" wget -qO- http://127.0.0.1:3000/health >/dev/null; then
+              if timeout 20s docker exec "$ROLLBACK_SMOKE" wget -T 15 -qO- http://127.0.0.1:3000/health >/dev/null; then
                 break
               fi
               test "$attempt" -lt 15
@@ -149,7 +154,7 @@ jobs:
             docker compose -p "$PROJECT" -f "$CURRENT/docker-compose.yml" up -d --no-deps concierge-web
 
             for attempt in $(seq 1 30); do
-              if docker exec veloce-concierge-web wget -qO- http://127.0.0.1:3000/ready >/dev/null; then
+              if timeout 20s docker exec veloce-concierge-web wget -T 15 -qO- http://127.0.0.1:3000/ready >/dev/null; then
                 break
               fi
               test "$attempt" -lt 30
@@ -157,4 +162,36 @@ jobs:
             done
             test "$(docker inspect -f '{{.Image}}' veloce-concierge-web)" = "$IMAGE"
             docker exec veloce-concierge-web node -e "const D=require('better-sqlite3');const d=new D('/data/web.sqlite',{readonly:true});if(d.pragma('user_version',{simple:true})!==4)process.exit(1);if(d.pragma('integrity_check',{simple:true})!=='ok')process.exit(1);d.close()"
+
+            CADDY_UID="$(stat -c %u "$BASE/infra/caddy/Caddyfile")"
+            CADDY_GID="$(stat -c %g "$BASE/infra/caddy/Caddyfile")"
+            CADDY_MODE="$(stat -c %a "$BASE/infra/caddy/Caddyfile")"
+            cp "$BASE/infra/caddy/Caddyfile" "$BACKUPS/Caddyfile-$SHA"
+            install -o "$CADDY_UID" -g "$CADDY_GID" -m "$CADDY_MODE" \
+              "$RELEASE/infra/caddy/Caddyfile" "$BASE/infra/caddy/Caddyfile.next"
+            mv -Tf "$BASE/infra/caddy/Caddyfile.next" "$BASE/infra/caddy/Caddyfile"
+            deploy_caddy() {
+              mode="$1"
+              timeout 120s docker compose -p "$PROJECT" -f "$BASE/docker-compose.yml" up -d --no-deps --force-recreate caddy || return 1
+              for attempt in $(seq 1 15); do
+                if test "$(timeout 20s docker inspect -f '{{.State.Running}}' veloce-caddy)" = true && \
+                  timeout 20s docker exec veloce-caddy caddy validate --config /etc/caddy/Caddyfile >/dev/null; then
+                  break
+                fi
+                test "$attempt" -lt 15 || return 1
+                sleep 1
+              done
+              wget -T 15 -qO- https://veloce.team/ | grep -F 'veloce.team' >/dev/null || return 1
+              wget -T 15 -qO- https://api.veloce.team/health | grep -F '"status":"ok"' >/dev/null || return 1
+              if test "$mode" = candidate; then
+                wget -T 15 -qO- https://api.veloce.team/ready | grep -F '"status":"ready"' >/dev/null || return 1
+              fi
+            }
+            if ! deploy_caddy candidate; then
+              install -o "$CADDY_UID" -g "$CADDY_GID" -m "$CADDY_MODE" \
+                "$BACKUPS/Caddyfile-$SHA" "$BASE/infra/caddy/Caddyfile.rollback"
+              mv -Tf "$BASE/infra/caddy/Caddyfile.rollback" "$BASE/infra/caddy/Caddyfile"
+              deploy_caddy rollback
+              exit 1
+            fi
             trap - EXIT

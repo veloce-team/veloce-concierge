@@ -40,4 +40,57 @@ describe('health and readiness', () => {
     expect(available.status).toBe(200);
     expect(await available.json()).toMatchObject({ status: 'ready' });
   });
+
+  it('publishes only the allowlisted operational readiness schema', async () => {
+    const server = app(() => ({
+      ready: false,
+      secret: 'must-not-leak',
+      analytics: {
+        enabled: true,
+        ready: false,
+        started: true,
+        stopping: false,
+        running: { poll: false, upload: false, reconcile: false },
+        lastSuccessAt: { poll: 1, upload: 2, reconcile: 3, arbitrary: 4 },
+        lastFailureAt: { poll: 5, upload: null, reconcile: null },
+        issues: ['outbox:retry', 'semantic:unknown_category', 'raw:customer@example.com'],
+        outbox: {
+          counts: { retry: 1, clean: 2, arbitrary_status: 99 },
+          deliverableBacklog: 1,
+          terminal: 0,
+          payload: { email: 'customer@example.com' },
+        },
+        limits: {
+          outboxAlertThreshold: 5,
+          staleAfterMs: { poll: 900_000, upload: 300_000, reconcile: 600_000, arbitrary: 1 },
+        },
+        oauthToken: 'must-not-leak',
+      },
+    }));
+
+    const response = await server.request('/ready');
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      ready: false,
+      analytics: {
+        enabled: true,
+        ready: false,
+        issues: ['outbox:retry', 'semantic:unknown_category'],
+        lastSuccessAt: { poll: 1, upload: 2, reconcile: 3 },
+        outbox: { counts: { retry: 1, clean: 2 }, deliverableBacklog: 1, terminal: 0 },
+        limits: {
+          outboxAlertThreshold: 5,
+          staleAfterMs: { poll: 900_000, upload: 300_000, reconcile: 600_000 },
+        },
+      },
+      status: 'not_ready',
+    });
+  });
+
+  it('serves readiness only on the exact GET endpoint', async () => {
+    const server = app(() => ({ ready: true, analytics: { enabled: false, ready: true } }));
+    expect((await server.request('/ready')).status).toBe(200);
+    expect((await server.request('/ready/extra')).status).toBe(404);
+    expect((await server.request('/ready', { method: 'POST' })).status).toBe(404);
+  });
 });

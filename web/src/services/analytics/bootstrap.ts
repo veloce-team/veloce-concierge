@@ -31,5 +31,8 @@ export function createAnalyticsRuntime(
     uploadIntervalMs: env.ANALYTICS_UPLOAD_INTERVAL_MS,
     reconcileIntervalMs: env.ANALYTICS_RECONCILE_INTERVAL_MS,
     outboxAlertThreshold: env.ANALYTICS_OUTBOX_ALERT_THRESHOLD,
+    pollStaleAfterMs: env.ANALYTICS_POLL_STALE_AFTER_MS,
+    uploadStaleAfterMs: env.ANALYTICS_UPLOAD_STALE_AFTER_MS,
+    reconcileStaleAfterMs: env.ANALYTICS_RECONCILE_STALE_AFTER_MS,
   });
 }

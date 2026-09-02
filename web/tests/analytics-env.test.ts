@@ -13,6 +13,22 @@ describe('offline analytics environment gate', () => {
     expect(env.ANALYTICS_ENABLED).toBe(false);
   });
 
+  it('uses the approved operational alert limits by default', () => {
+    const env = parseEnv({
+      ...base,
+      ANALYTICS_ENABLED: 'true',
+      BITRIX24_PORTAL_ID: 'member-portal-1',
+      YANDEX_METRIKA_COUNTER_ID: '109782828',
+      YANDEX_OAUTH_TOKEN: 'secret-token',
+    });
+    expect(env).toMatchObject({
+      ANALYTICS_OUTBOX_ALERT_THRESHOLD: 5,
+      ANALYTICS_POLL_STALE_AFTER_MS: 900_000,
+      ANALYTICS_UPLOAD_STALE_AFTER_MS: 300_000,
+      ANALYTICS_RECONCILE_STALE_AFTER_MS: 600_000,
+    });
+  });
+
   it('parses the complete enabled worker configuration', () => {
     const env = parseEnv({
       ...base,
