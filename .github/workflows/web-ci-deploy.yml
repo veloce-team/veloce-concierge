@@ -32,6 +32,7 @@ jobs:
         run: |
           test -f dist/tools/db-migrate.js
           test -f dist/services/sessions/migrations/003-offline-analytics.sql
+          test -f dist/services/sessions/migrations/004-lineage-root.sql
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -70,6 +71,7 @@ jobs:
 
             test -f "$RELEASE/web/package-lock.json"
             test -f "$RELEASE/web/src/services/sessions/migrations/003-offline-analytics.sql"
+            test -f "$RELEASE/web/src/services/sessions/migrations/004-lineage-root.sql"
             test -f "$BASE/web/.env"
             chmod 600 "$BASE/web/.env"
             ln -sfn "$BASE/web/.env" "$RELEASE/web/.env"
@@ -94,7 +96,9 @@ jobs:
             docker cp "veloce-concierge-web:$SNAP_IN_VOLUME" "$BACKUPS/web-$SHA.sqlite"
             docker exec veloce-concierge-web rm -f "$SNAP_IN_VOLUME"
             cp "$BACKUPS/web-$SHA.sqlite" "$BACKUPS/web-$SHA.rehearsal.sqlite"
+            cp "$BACKUPS/web-$SHA.sqlite" "$BACKUPS/web-$SHA.rollback.sqlite"
             chown 1000:1000 "$BACKUPS/web-$SHA.rehearsal.sqlite"
+            chown 1000:1000 "$BACKUPS/web-$SHA.rollback.sqlite"
             docker run --rm --network none --user node \
               -v "$BACKUPS/web-$SHA.rehearsal.sqlite:/data/web.sqlite" \
               "$IMAGE" node dist/tools/db-migrate.js /data/web.sqlite
@@ -103,7 +107,7 @@ jobs:
             trap 'docker rm -f "$ROLLBACK_SMOKE" >/dev/null 2>&1 || true' EXIT
             docker run -d --rm --name "$ROLLBACK_SMOKE" --network none \
               --env-file "$BASE/web/.env" \
-              -v "$BACKUPS/web-$SHA.rehearsal.sqlite:/data/web.sqlite" \
+              -v "$BACKUPS/web-$SHA.rollback.sqlite:/data/web.sqlite" \
               "$PREVIOUS_IMAGE"
             for attempt in $(seq 1 15); do
               if docker exec "$ROLLBACK_SMOKE" wget -qO- http://127.0.0.1:3000/health >/dev/null; then
@@ -116,12 +120,19 @@ jobs:
             trap - EXIT
 
             rollback() {
+              docker inspect veloce-concierge-web >/dev/null
+              docker stop -t 35 veloce-concierge-web
+              test "$(docker inspect -f '{{.State.Running}}' veloce-concierge-web)" = false
               if test "$HAD_CURRENT" = 1; then
                 ln -sfn "$PREVIOUS" "$BASE/current.rollback"
                 mv -Tf "$BASE/current.rollback" "$CURRENT"
               else
                 rm -f "$CURRENT"
               fi
+              docker run --rm --network none --user node \
+                -v "${PROJECT}_web_data:/data" \
+                -v "$BACKUPS:/backup:ro" \
+                "$PREVIOUS_IMAGE" node -e "const fs=require('node:fs');const D=require('better-sqlite3');for(const p of ['/data/web.sqlite-wal','/data/web.sqlite-shm'])try{fs.unlinkSync(p)}catch(e){if(e.code!=='ENOENT')throw e}const source=new D('/backup/web-$SHA.sqlite',{readonly:true});source.backup('/data/web.sqlite').then(()=>source.close())"
               docker image tag "$PREVIOUS_IMAGE" "$CANDIDATE_TAG" || true
               docker compose -p "$PROJECT" -f "$PREVIOUS/docker-compose.yml" up -d --no-deps --force-recreate concierge-web || true
             }
@@ -145,5 +156,5 @@ jobs:
               sleep 2
             done
             test "$(docker inspect -f '{{.Image}}' veloce-concierge-web)" = "$IMAGE"
-            docker exec veloce-concierge-web node -e "const D=require('better-sqlite3');const d=new D('/data/web.sqlite',{readonly:true});if(d.pragma('user_version',{simple:true})!==3)process.exit(1);if(d.pragma('integrity_check',{simple:true})!=='ok')process.exit(1);d.close()"
+            docker exec veloce-concierge-web node -e "const D=require('better-sqlite3');const d=new D('/data/web.sqlite',{readonly:true});if(d.pragma('user_version',{simple:true})!==4)process.exit(1);if(d.pragma('integrity_check',{simple:true})!=='ok')process.exit(1);d.close()"
             trap - EXIT

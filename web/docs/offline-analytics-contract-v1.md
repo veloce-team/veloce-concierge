@@ -15,7 +15,7 @@
 | `analytics/worker.ts` | orchestration, интервалы, backoff, alerts, at-least-once execution | миграции и exactly-once обещания |
 | `sessions/db.ts` + migrations | единственный physical schema/migration authority | runtime auto-migration |
 
-Сетевые вызовы выполняются только вне SQLite-транзакций. Обычный runtime принимает только schema version 3; миграция выполняется отдельным deployment gate.
+Сетевые вызовы выполняются только вне SQLite-транзакций. Обычный runtime принимает только schema version 4; миграция выполняется отдельным deployment gate.
 
 ## Конфигурация
 
@@ -36,7 +36,7 @@ Worker выключен по умолчанию. Для `ANALYTICS_ENABLED=true`
 
 ### Canonical Bitrix fact
 
-`AnalyticsDeal` содержит только `portalId`, `dealId`, `contactId`, `categoryId`, `stageId`, `createdAt`, `modifiedAt`, `opportunity`, `currencyId`, `ymClientId`. История — `id`, `categoryId`, `stageId`, `createdAt`. Имя, телефон, email, комментарии и текст заявки запрещены на границе mapping.
+`AnalyticsDeal` содержит только `portalId`, physical `dealId`, canonical `sourceDealId`, `contactId`, `categoryId`, `stageId`, `createdAt`, `modifiedAt`, `opportunity`, `currencyId`, `ymClientId`. `sourceDealId` читается из обязательного integer-поля Bitrix24 `UF_CRM_1780724113` (`ID исходной сделки`). История — `id`, `categoryId`, `stageId`, `createdAt`. Имя, телефон, email, комментарии и текст заявки запрещены на границе mapping.
 
 ### Immutable milestone
 
@@ -44,13 +44,13 @@ Worker выключен по умолчанию. Для `ANALYTICS_ENABLED=true`
 {"type":"qualified_lead|won_deal","occurredAt":"ISO-8601 event time","contractVersion":1}
 ```
 
-Idempotency key: `(portal_id, deal_id, event_type, contract_version)`. Время берётся из `crm.stagehistory.list`, не из poll/upload clock.
+Idempotency key: `(portal_id, source_deal_id, event_type, contract_version)`. В SQLite `deal_id` означает canonical root/source deal ID. Время берётся из объединённой хронологии сделок lineage, не из poll/upload clock.
 
 ### Desired Yandex order
 
 ```json
 {
-  "id":"b24:{portal_id}:deal:{deal_id}",
+  "id":"b24:{portal_id}:deal:{source_deal_id}",
   "createDateTime":"qualified transition time",
   "clientUniqId":"b24:{portal_id}:contact:{contact_id} or deal fallback",
   "clientIds":"Yandex ClientID",
@@ -64,18 +64,19 @@ PII-поля `emails` и `phones` в CSV всегда пусты. Один order
 
 ## Семантика
 
-- `qualified_lead`: только первый исторический переход category `0` → `2|4|6`.
+- Bitrix24 переносит сделку из квалификации копированием: root остаётся в category `0`, а новая physical deal сразу создаётся в `2|4|6`. Worker группирует все physical deals по `(portalId, sourceDealId)` и хранит один logical state/order на root ID. Для qualification history учитываются только category-`0` строки root и working-category строки non-root descendants; interposed excluded/unknown history не меняет первое время квалификации. Актуальной считается newest physical deal по `DATE_CREATE` (tie-break: `DATE_MODIFY`, затем numeric deal ID), и только её stage history определяет signed/won/cancelled status; поэтому root или старая копия не могут переопределить status, а более новая excluded/unknown копия не может оставить активной stale working delivery. Lineage без существующего root или без category-`0` history root fail-closed.
+- `qualified_lead`: только первое появление потомка root-сделки category `0` в `2|4|6`; physical target ID не меняет identity заказа.
 - Category `10` и `12` всегда дают exclusion tombstone и гасят доставку; неизвестная категория fail-closed + alert.
 - Повторный выход после возврата в category `0` не создаёт второй milestone.
 - Revenue становится активным после исторически подтверждённого `C2|C4|C6:FINAL_INVOICE`, но не снапшотится: на каждом poll используется текущая `OPPORTUNITY + CURRENCY_ID`.
 - Изменение суммы обновляет тот же order. Допустима только положительная десятичная строка `digits[.digits]` без пробелов, exponent/hex notation и знака. Невалидная текущая сумма после signing переводит delivery в durable `held`, блокирует stale refresh и снимается следующим валидным poll; выдуманный `0` запрещён.
-- `won_deal`: только `C2|C4|C6:WON`; revenue берётся из текущей сделки.
+- `won_deal`: только `C2|C4|C6:WON`; revenue и currency берутся из актуальной working-funnel physical deal, но обновляют root order.
 - Loss/cancel обновляет тот же order в `CANCELLED` с revenue `0`.
 - Первичная привязка старше 21 дня и update старше 111 дней становятся `UNMATCHABLE_WINDOW_EXPIRED` + alert.
 
 ## SQLite physical contract
 
-Schema authority: `src/services/sessions/migrations/003-offline-analytics.sql`, `PRAGMA user_version=3`.
+Schema authority: `src/services/sessions/migrations/003-offline-analytics.sql` + semantic identity gate `004-lineage-root.sql`, `PRAGMA user_version=4`. Upgrade `3→4` разрешён только при пустых `analytics_events`, `yandex_outbox` и `yandex_order_state`; иначе миграция атомарно fail-closed. Rebuildable physical snapshots `crm_deal_state` очищаются и восстанавливаются следующим Bitrix poll уже по root identity.
 
 - `crm_deal_state`: canonical snapshot, independent milestone timestamps и текущий payload hash.
 - `analytics_events`: immutable milestones, unique semantic key, FK to deal state.
@@ -130,9 +131,9 @@ Concrete goals mapping: `GET|POST /management/v1/counter/{counterId}/goals`, OAu
 
 ## Контролируемый E2E (отдельный gate)
 
-1. Preconditions: source/build/tests/deploy gates green; schema migration rehearsed; goals created and exact-read-back; worker limits/alerts enabled; paid traffic remains off.
+1. Preconditions: source/build/tests/deploy gates green; schema migration `3→4` rehearsed на свежей production-копии и empty-delivery guard подтверждён; goals created and exact-read-back; worker limits/alerts enabled; paid traffic remains off.
 2. Создать одну явно помеченную test deal с synthetic ClientID, сохранить все созданные CRM IDs.
-3. Выполнить 0→2, повторный poll ×10, restart, FINAL_INVOICE, WON и проверить один order id, semantic uniqueness, terminal Yandex read-back и отсутствие PII.
+3. Выполнить Bitrix24 copy-transition `root category 0 → target category 2|4|6`, проверить общий `UF_CRM_1780724113`, повторный poll ×10, restart, FINAL_INVOICE и WON на target deal; подтвердить один root order id, semantic uniqueness, terminal Yandex read-back и отсутствие PII.
 4. В `finally` удалить/закрыть только записанные test IDs, убрать связанные local ledger/outbox rows через отдельную scoped cleanup-команду, затем read-back подтвердить отсутствие тестовых данных.
 5. Любая ошибка cleanup — NO-GO и ручная эскалация с точными test IDs. Production rows не редактировать.
 

@@ -5,7 +5,7 @@ import { YandexApiError } from '../src/services/analytics/yandex.js';
 import type { AnalyticsDeal } from '../src/services/analytics/semantic.js';
 
 const deal: AnalyticsDeal = {
-  portalId: 'portal-1', dealId: '42', contactId: '7', categoryId: '2', stageId: 'C2:NEW',
+  portalId: 'portal-1', dealId: '42', sourceDealId: '42', contactId: '7', categoryId: '2', stageId: 'C2:NEW',
   createdAt: '2026-09-01T09:00:00Z', modifiedAt: '2026-09-01T10:00:00Z', opportunity: '0',
   currencyId: 'RUB', ymClientId: '123456789012345678',
 };
@@ -120,9 +120,393 @@ describe('offline analytics worker orchestration', () => {
 
     await worker.tickPoll();
     expect(applyTransition).toHaveBeenCalledOnce();
+    expect(applyTransition.mock.calls[0]![0]).toMatchObject({
+      portalId: 'portal-1', dealId: '42', categoryId: '2', stageId: 'C2:NEW',
+    });
+  });
+
+  it('treats a copied working-funnel deal as one logical transition rooted at source deal ID', async () => {
+    const source = {
+      ...deal,
+      dealId: '202', sourceDealId: '202', categoryId: '0', stageId: 'WON',
+      createdAt: '2026-09-01T15:52:58Z', modifiedAt: '2026-09-02T00:30:23Z',
+    } as AnalyticsDeal & { sourceDealId: string };
+    const target = {
+      ...deal,
+      dealId: '204', sourceDealId: '202', categoryId: '6', stageId: 'C6:FINAL_INVOICE',
+      createdAt: '2026-09-02T00:30:24Z', modifiedAt: '2026-09-02T00:30:24Z',
+      opportunity: '150000',
+    } as AnalyticsDeal & { sourceDealId: string };
+    const histories = new Map([
+      ['202', [
+        { id: '300', categoryId: '0', stageId: 'NEW', createdAt: '2026-09-01T15:52:58Z' },
+        { id: '302', categoryId: '0', stageId: 'WON', createdAt: '2026-09-02T00:30:23Z' },
+      ]],
+      ['204', [
+        { id: '304', categoryId: '6', stageId: 'C6:FINAL_INVOICE', createdAt: '2026-09-02T00:30:24Z' },
+      ]],
+    ]);
+    const applyTransition = vi.fn();
+    const getState = vi.fn().mockReturnValue({
+      portalId: 'portal-1', dealId: '202', qualifiedAt: null, signedAt: null,
+      signedRevenue: null, signedCurrency: null, wonAt: null, cancelledAt: null,
+      lastPayloadHash: null, payloadRevision: 0,
+    });
+    const worker = createAnalyticsWorker({
+      bitrix: {
+        listTrackedDeals: vi.fn().mockResolvedValue([source, target]),
+        getStageHistory: vi.fn((dealId: string) => Promise.resolve(histories.get(dealId) ?? [])),
+      },
+      repository: { getState, applyTransition } as any,
+      yandex: {} as any,
+      logger: logger(),
+    });
+
+    await worker.tickPoll();
+
+    expect(getState).toHaveBeenCalledOnce();
+    expect(getState).toHaveBeenCalledWith('portal-1', '202');
+    expect(applyTransition).toHaveBeenCalledOnce();
+    expect(applyTransition.mock.calls[0]![0]).toMatchObject({
+      dealId: '202', categoryId: '6', stageId: 'C6:FINAL_INVOICE', opportunity: '150000',
+    });
     expect(applyTransition.mock.calls[0]![1]).toMatchObject({
       events: [expect.objectContaining({ type: 'qualified_lead' })],
-      order: expect.objectContaining({ id: 'b24:portal-1:deal:42' }),
+      order: expect.objectContaining({ id: 'b24:portal-1:deal:202', revenue: '150000' }),
+    });
+  });
+
+  it('lets the newest copied descendant suppress an older working-funnel delivery', async () => {
+    const source = {
+      ...deal, dealId: '202', sourceDealId: '202', categoryId: '0', stageId: 'WON',
+      createdAt: '2026-09-01T09:00:00Z', modifiedAt: '2026-09-03T09:00:00Z',
+    };
+    const working = {
+      ...deal, dealId: '204', sourceDealId: '202', categoryId: '6', stageId: 'C6:NEW',
+      createdAt: '2026-09-02T09:00:00Z', modifiedAt: '2026-09-02T09:00:00Z',
+    };
+    const excluded = {
+      ...deal, dealId: '206', sourceDealId: '202', categoryId: '10', stageId: 'C10:NEW',
+      createdAt: '2026-09-03T08:00:00Z', modifiedAt: '2026-09-03T08:00:00Z',
+    };
+    const applyTransition = vi.fn();
+    const worker = createAnalyticsWorker({
+      bitrix: {
+        listTrackedDeals: vi.fn().mockResolvedValue([excluded, source, working]),
+        getStageHistory: vi.fn((dealId: string) => Promise.resolve([
+          { id: dealId, categoryId: dealId === '202' ? '0' : dealId === '204' ? '6' : '10',
+            stageId: dealId === '202' ? 'NEW' : `C${dealId === '204' ? '6' : '10'}:NEW`,
+            createdAt: dealId === '202' ? source.createdAt : dealId === '204' ? working.createdAt : excluded.createdAt },
+        ])),
+      },
+      repository: {
+        getState: vi.fn().mockReturnValue({
+          portalId: 'portal-1', dealId: '202', qualifiedAt: '2026-09-02T09:00:00Z',
+          signedAt: null, signedRevenue: null, signedCurrency: null, wonAt: null,
+          cancelledAt: null, lastPayloadHash: 'old', payloadRevision: 1,
+        }),
+        applyTransition,
+      } as any,
+      yandex: {} as any,
+      logger: logger(),
+    });
+
+    await worker.tickPoll();
+
+    expect(applyTransition).toHaveBeenCalledOnce();
+    expect(applyTransition.mock.calls[0]![0]).toMatchObject({ dealId: '202', categoryId: '10' });
+    expect(applyTransition.mock.calls[0]![1]).toMatchObject({
+      order: null,
+      suppressDelivery: true,
+    });
+  });
+
+  it('fails one malformed lineage closed when its referenced category-0 root is absent', async () => {
+    const error = vi.fn();
+    const orphan = {
+      ...deal,
+      dealId: '204', sourceDealId: '202', categoryId: '6', stageId: 'C6:NEW',
+    };
+    const applyTransition = vi.fn();
+    const activeState = {
+      portalId: 'portal-1', dealId: '202', qualifiedAt: '2026-09-01T10:00:00Z',
+      signedAt: null, signedRevenue: null, signedCurrency: null, wonAt: null,
+      cancelledAt: null, lastPayloadHash: 'active-payload', payloadRevision: 1,
+    };
+    const worker = createAnalyticsWorker({
+      bitrix: {
+        listTrackedDeals: vi.fn().mockResolvedValue([orphan]),
+        getStageHistory: vi.fn().mockResolvedValue([
+          { id: '304', categoryId: '6', stageId: 'C6:NEW', createdAt: orphan.createdAt },
+        ]),
+      },
+      repository: { getState: vi.fn().mockReturnValue(activeState), applyTransition } as any,
+      yandex: {} as any,
+      logger: { warn: vi.fn(), info: vi.fn(), error } as any,
+    });
+
+    await worker.tickPoll();
+
+    expect(applyTransition).toHaveBeenCalledOnce();
+    expect(applyTransition.mock.calls[0]![0]).toMatchObject({ dealId: '202' });
+    expect(applyTransition.mock.calls[0]![1]).toMatchObject({
+      nextState: activeState, events: [], order: null, suppressDelivery: true,
+    });
+    expect(error).toHaveBeenCalledWith(
+      { deal_id: '202', physical_deal_ids: ['204'] },
+      'analytics: lineage root missing',
+    );
+  });
+
+  it('fails one lineage closed when the referenced root has no category-0 history', async () => {
+    const error = vi.fn();
+    const root = {
+      ...deal,
+      dealId: '202', sourceDealId: '202', categoryId: '6', stageId: 'C6:NEW',
+    };
+    const applyTransition = vi.fn();
+    const activeState = {
+      portalId: 'portal-1', dealId: '202', qualifiedAt: '2026-09-01T10:00:00Z',
+      signedAt: null, signedRevenue: null, signedCurrency: null, wonAt: null,
+      cancelledAt: null, lastPayloadHash: 'active-payload', payloadRevision: 1,
+    };
+    const worker = createAnalyticsWorker({
+      bitrix: {
+        listTrackedDeals: vi.fn().mockResolvedValue([root]),
+        getStageHistory: vi.fn().mockResolvedValue([
+          { id: '304', categoryId: '6', stageId: 'C6:NEW', createdAt: root.createdAt },
+        ]),
+      },
+      repository: { getState: vi.fn().mockReturnValue(activeState), applyTransition } as any,
+      yandex: {} as any,
+      logger: { warn: vi.fn(), info: vi.fn(), error } as any,
+    });
+
+    await worker.tickPoll();
+
+    expect(applyTransition).toHaveBeenCalledOnce();
+    expect(applyTransition.mock.calls[0]![0]).toMatchObject({ dealId: '202' });
+    expect(applyTransition.mock.calls[0]![1]).toMatchObject({
+      nextState: activeState, events: [], order: null, suppressDelivery: true,
+    });
+    expect(error).toHaveBeenCalledWith(
+      { deal_id: '202' },
+      'analytics: lineage root has no qualification history',
+    );
+  });
+
+  it('does not qualify a root-only lineage from a same-deal category-0 to working transition', async () => {
+    const root = {
+      ...deal,
+      dealId: '202', sourceDealId: '202', categoryId: '6', stageId: 'C6:NEW',
+    };
+    const applyTransition = vi.fn();
+    const worker = createAnalyticsWorker({
+      bitrix: {
+        listTrackedDeals: vi.fn().mockResolvedValue([root]),
+        getStageHistory: vi.fn().mockResolvedValue([
+          { id: '1', categoryId: '0', stageId: 'NEW', createdAt: '2026-09-01T09:00:00Z' },
+          { id: '2', categoryId: '6', stageId: 'C6:NEW', createdAt: '2026-09-01T10:00:00Z' },
+        ]),
+      },
+      repository: {
+        getState: vi.fn().mockReturnValue({
+          portalId: 'portal-1', dealId: '202', qualifiedAt: null, signedAt: null,
+          signedRevenue: null, signedCurrency: null, wonAt: null, cancelledAt: null,
+          lastPayloadHash: null, payloadRevision: 0,
+        }),
+        applyTransition,
+      } as any,
+      yandex: {} as any,
+      logger: logger(),
+    });
+
+    await worker.tickPoll();
+
+    expect(applyTransition).toHaveBeenCalledOnce();
+    expect(applyTransition.mock.calls[0]![1]).toMatchObject({ events: [], order: null });
+  });
+
+  it('qualifies the first working descendant despite interposed excluded lineage history', async () => {
+    const root = {
+      ...deal, dealId: '202', sourceDealId: '202', categoryId: '0', stageId: 'WON',
+      createdAt: '2026-09-01T09:00:00Z', modifiedAt: '2026-09-03T09:00:00Z',
+    };
+    const excluded = {
+      ...deal, dealId: '204', sourceDealId: '202', categoryId: '10', stageId: 'C10:NEW',
+      createdAt: '2026-09-01T09:30:00Z', modifiedAt: '2026-09-01T09:30:00Z',
+    };
+    const working = {
+      ...deal, dealId: '206', sourceDealId: '202', categoryId: '6', stageId: 'C6:NEW',
+      createdAt: '2026-09-01T10:00:00Z', modifiedAt: '2026-09-01T10:00:00Z',
+    };
+    const histories = new Map([
+      ['202', [{ id: '1', categoryId: '0', stageId: 'NEW', createdAt: root.createdAt }]],
+      ['204', [{ id: '2', categoryId: '10', stageId: 'C10:NEW', createdAt: excluded.createdAt }]],
+      ['206', [{ id: '3', categoryId: '6', stageId: 'C6:NEW', createdAt: working.createdAt }]],
+    ]);
+    const applyTransition = vi.fn();
+    const worker = createAnalyticsWorker({
+      bitrix: {
+        listTrackedDeals: vi.fn().mockResolvedValue([root, excluded, working]),
+        getStageHistory: vi.fn((dealId: string) => Promise.resolve(histories.get(dealId) ?? [])),
+      },
+      repository: {
+        getState: vi.fn().mockReturnValue({
+          portalId: 'portal-1', dealId: '202', qualifiedAt: null, signedAt: null,
+          signedRevenue: null, signedCurrency: null, wonAt: null, cancelledAt: null,
+          lastPayloadHash: null, payloadRevision: 0,
+        }),
+        applyTransition,
+      } as any,
+      yandex: {} as any,
+      logger: logger(),
+    });
+
+    await worker.tickPoll();
+
+    expect(applyTransition).toHaveBeenCalledOnce();
+    expect(applyTransition.mock.calls[0]![1]).toMatchObject({
+      events: [{ type: 'qualified_lead', occurredAt: working.createdAt, contractVersion: 1 }],
+      order: expect.objectContaining({ id: 'b24:portal-1:deal:202', createDateTime: working.createdAt }),
+    });
+  });
+
+  it('uses numeric deal ID as the final newest-deal tie-breaker', async () => {
+    const timestamp = '2026-09-02T09:00:00Z';
+    const root = {
+      ...deal, dealId: '202', sourceDealId: '202', categoryId: '0', stageId: 'WON',
+      createdAt: '2026-09-01T09:00:00Z', modifiedAt: '2026-09-03T09:00:00Z',
+    };
+    const lower = {
+      ...deal, dealId: '204', sourceDealId: '202', categoryId: '6', stageId: 'C6:NEW',
+      createdAt: timestamp, modifiedAt: timestamp,
+    };
+    const higher = {
+      ...deal, dealId: '206', sourceDealId: '202', categoryId: '10', stageId: 'C10:NEW',
+      createdAt: timestamp, modifiedAt: timestamp,
+    };
+    const applyTransition = vi.fn();
+    const worker = createAnalyticsWorker({
+      bitrix: {
+        listTrackedDeals: vi.fn().mockResolvedValue([higher, root, lower]),
+        getStageHistory: vi.fn((dealId: string) => Promise.resolve([{
+          id: dealId,
+          categoryId: dealId === '202' ? '0' : dealId === '204' ? '6' : '10',
+          stageId: dealId === '202' ? 'NEW' : dealId === '204' ? 'C6:NEW' : 'C10:NEW',
+          createdAt: dealId === '202' ? root.createdAt : timestamp,
+        }])),
+      },
+      repository: {
+        getState: vi.fn().mockReturnValue({
+          portalId: 'portal-1', dealId: '202', qualifiedAt: null, signedAt: null,
+          signedRevenue: null, signedCurrency: null, wonAt: null, cancelledAt: null,
+          lastPayloadHash: null, payloadRevision: 0,
+        }),
+        applyTransition,
+      } as any,
+      yandex: {} as any,
+      logger: logger(),
+    });
+
+    await worker.tickPoll();
+
+    expect(applyTransition).toHaveBeenCalledOnce();
+    expect(applyTransition.mock.calls[0]![0]).toMatchObject({ dealId: '202', categoryId: '10' });
+    expect(applyTransition.mock.calls[0]![1]).toMatchObject({ order: null, suppressDelivery: true });
+  });
+
+  it('uses modified time before numeric ID when creation timestamps tie', async () => {
+    const createdAt = '2026-09-02T09:00:00Z';
+    const root = {
+      ...deal, dealId: '202', sourceDealId: '202', categoryId: '0', stageId: 'WON',
+      createdAt: '2026-09-01T09:00:00Z', modifiedAt: '2026-09-03T09:00:00Z',
+    };
+    const olderModifiedHigherId = {
+      ...deal, dealId: '206', sourceDealId: '202', categoryId: '6', stageId: 'C6:NEW',
+      createdAt, modifiedAt: '2026-09-02T10:00:00Z',
+    };
+    const newerModifiedLowerId = {
+      ...deal, dealId: '204', sourceDealId: '202', categoryId: '10', stageId: 'C10:NEW',
+      createdAt, modifiedAt: '2026-09-02T11:00:00Z',
+    };
+    const applyTransition = vi.fn();
+    const worker = createAnalyticsWorker({
+      bitrix: {
+        listTrackedDeals: vi.fn().mockResolvedValue([newerModifiedLowerId, root, olderModifiedHigherId]),
+        getStageHistory: vi.fn((dealId: string) => Promise.resolve([{
+          id: dealId,
+          categoryId: dealId === '202' ? '0' : dealId === '206' ? '6' : '10',
+          stageId: dealId === '202' ? 'NEW' : dealId === '206' ? 'C6:NEW' : 'C10:NEW',
+          createdAt: dealId === '202' ? root.createdAt : createdAt,
+        }])),
+      },
+      repository: {
+        getState: vi.fn().mockReturnValue({
+          portalId: 'portal-1', dealId: '202', qualifiedAt: null, signedAt: null,
+          signedRevenue: null, signedCurrency: null, wonAt: null, cancelledAt: null,
+          lastPayloadHash: null, payloadRevision: 0,
+        }),
+        applyTransition,
+      } as any,
+      yandex: {} as any,
+      logger: logger(),
+    });
+
+    await worker.tickPoll();
+
+    expect(applyTransition).toHaveBeenCalledOnce();
+    expect(applyTransition.mock.calls[0]![0]).toMatchObject({ dealId: '202', categoryId: '10' });
+  });
+
+  it('derives status only from the newest physical descendant history', async () => {
+    const root = {
+      ...deal, dealId: '202', sourceDealId: '202', categoryId: '0', stageId: 'WON',
+      createdAt: '2026-09-01T08:00:00Z', modifiedAt: '2026-09-03T09:00:00Z',
+    };
+    const older = {
+      ...deal, dealId: '204', sourceDealId: '202', categoryId: '6', stageId: 'C6:WON',
+      createdAt: '2026-09-01T09:00:00Z', modifiedAt: '2026-09-01T11:00:00Z', opportunity: '150000',
+    };
+    const newest = {
+      ...deal, dealId: '206', sourceDealId: '202', categoryId: '6', stageId: 'C6:NEW',
+      createdAt: '2026-09-02T09:00:00Z', modifiedAt: '2026-09-02T09:00:00Z', opportunity: '0',
+    };
+    const histories = new Map([
+      ['202', [{ id: '1', categoryId: '0', stageId: 'NEW', createdAt: root.createdAt }]],
+      ['204', [
+        { id: '2', categoryId: '6', stageId: 'C6:NEW', createdAt: older.createdAt },
+        { id: '3', categoryId: '6', stageId: 'C6:FINAL_INVOICE', createdAt: '2026-09-01T10:00:00Z' },
+        { id: '4', categoryId: '6', stageId: 'C6:WON', createdAt: '2026-09-01T11:00:00Z' },
+      ]],
+      ['206', [{ id: '5', categoryId: '6', stageId: 'C6:NEW', createdAt: newest.createdAt }]],
+    ]);
+    const applyTransition = vi.fn();
+    const worker = createAnalyticsWorker({
+      bitrix: {
+        listTrackedDeals: vi.fn().mockResolvedValue([root, older, newest]),
+        getStageHistory: vi.fn((dealId: string) => Promise.resolve(histories.get(dealId) ?? [])),
+      },
+      repository: {
+        getState: vi.fn().mockReturnValue({
+          portalId: 'portal-1', dealId: '202', qualifiedAt: older.createdAt,
+          signedAt: '2026-09-01T10:00:00Z', signedRevenue: '150000', signedCurrency: 'RUB',
+          wonAt: '2026-09-01T11:00:00Z', cancelledAt: '2026-09-01T12:00:00Z',
+          lastPayloadHash: 'older-descendant-payload', payloadRevision: 3,
+        }),
+        applyTransition,
+      } as any,
+      yandex: {} as any,
+      logger: logger(),
+    });
+
+    await worker.tickPoll();
+
+    expect(applyTransition).toHaveBeenCalledOnce();
+    expect(applyTransition.mock.calls[0]![1]).toMatchObject({
+      nextState: { qualifiedAt: older.createdAt, signedAt: null, wonAt: null },
+      events: [],
+      order: expect.objectContaining({ status: 'qualified_lead', revenue: '0' }),
     });
   });
 

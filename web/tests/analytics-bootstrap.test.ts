@@ -16,7 +16,9 @@ const base = {
 
 function db() {
   const database = new Database(':memory:');
-  for (const name of ['001-init.sql', '002-lead-event-id.sql', '003-offline-analytics.sql']) {
+  for (const name of [
+    '001-init.sql', '002-lead-event-id.sql', '003-offline-analytics.sql', '004-lineage-root.sql',
+  ]) {
     database.exec(readFileSync(join(HERE, '..', 'src/services/sessions/migrations', name), 'utf8'));
   }
   return database;

@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const MIGRATIONS = ['001-init.sql', '002-lead-event-id.sql', '003-offline-analytics.sql'];
+const MIGRATIONS = [
+  '001-init.sql', '002-lead-event-id.sql', '003-offline-analytics.sql', '004-lineage-root.sql',
+];
 
 const EXACT_COLUMNS = {
   crm_deal_state: [
@@ -33,7 +35,7 @@ function migratedDb(): Database.Database {
   for (const migration of MIGRATIONS) {
     db.exec(readFileSync(join(HERE, '..', 'src/services/sessions/migrations', migration), 'utf8'));
   }
-  db.pragma('user_version = 3');
+  db.pragma('user_version = 4');
   return db;
 }
 

@@ -13,7 +13,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 function makeDb() {
   const db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
-  for (const migration of ['001-init.sql', '002-lead-event-id.sql', '003-offline-analytics.sql']) {
+  for (const migration of [
+    '001-init.sql', '002-lead-event-id.sql', '003-offline-analytics.sql', '004-lineage-root.sql',
+  ]) {
     db.exec(readFileSync(join(HERE, '..', 'src/services/sessions/migrations', migration), 'utf8'));
   }
   return db;
@@ -22,6 +24,7 @@ function makeDb() {
 const deal: AnalyticsDeal = {
   portalId: 'portal-1',
   dealId: '42',
+  sourceDealId: '42',
   contactId: '7',
   categoryId: '2',
   stageId: 'C2:NEW',
@@ -31,15 +34,26 @@ const deal: AnalyticsDeal = {
   currencyId: 'RUB',
   ymClientId: '123456789012345678',
 };
-const history = [
-  { id: '1', categoryId: '0', stageId: 'NEW', createdAt: '2026-09-01T09:00:00Z' },
-  { id: '2', categoryId: '2', stageId: 'C2:NEW', createdAt: '2026-09-01T10:00:00Z' },
-];
+const sourceDeal: AnalyticsDeal = {
+  ...deal,
+  categoryId: '0',
+  stageId: 'WON',
+  modifiedAt: '2026-09-01T09:59:59Z',
+};
+const targetDeal: AnalyticsDeal = {
+  ...deal,
+  dealId: '44',
+  sourceDealId: '42',
+};
+const histories = new Map([
+  ['42', [{ id: '1', categoryId: '0', stageId: 'NEW', createdAt: '2026-09-01T09:00:00Z' }]],
+  ['44', [{ id: '2', categoryId: '2', stageId: 'C2:NEW', createdAt: '2026-09-01T10:00:00Z' }]],
+]);
 
 function fakeBitrix() {
   return {
-    listTrackedDeals: vi.fn().mockResolvedValue([deal]),
-    getStageHistory: vi.fn().mockResolvedValue(history),
+    listTrackedDeals: vi.fn().mockResolvedValue([sourceDeal, targetDeal]),
+    getStageHistory: vi.fn((dealId: string) => Promise.resolve(histories.get(dealId) ?? [])),
   };
 }
 
@@ -60,7 +74,10 @@ describe('offline analytics lifecycle integration', () => {
     });
 
     await firstProcess.tickPoll();
+    for (let index = 0; index < 10; index += 1) await firstProcess.tickPoll();
     expect(repository.countByStatus()).toMatchObject({ dirty: 1 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM analytics_events').get()).toEqual({ n: 1 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM yandex_outbox').get()).toEqual({ n: 1 });
 
     const upload = vi.fn().mockResolvedValue({
       uploadId: 'upload-1',

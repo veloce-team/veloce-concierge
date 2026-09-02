@@ -24,6 +24,23 @@ function nullableString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+function canonicalTimestamp(value: unknown, label: string): string {
+  if (typeof value !== 'string') {
+    throw new Error(`invalid ${label} returned by Bitrix24`);
+  }
+  const match = /^([1-9]\d{3})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(value);
+  if (!match) throw new Error(`invalid ${label} returned by Bitrix24`);
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const timestamp = Date.parse(value);
+  if (day > daysInMonth || !Number.isFinite(timestamp)) {
+    throw new Error(`invalid ${label} returned by Bitrix24`);
+  }
+  return new Date(timestamp).toISOString().replace('.000Z', 'Z');
+}
+
 export function createBitrixAnalyticsClient(cfg: BitrixAnalyticsConfig): BitrixAnalyticsClient {
   const base = cfg.webhookUrl.endsWith('/') ? cfg.webhookUrl : `${cfg.webhookUrl}/`;
   const fetchImpl = cfg.fetchImpl ?? fetch;
@@ -67,6 +84,7 @@ export function createBitrixAnalyticsClient(cfg: BitrixAnalyticsConfig): BitrixA
           filter: { '=UF_CRM_VELOCE_ATTR_SCHEMA_VERSION': 1 },
           select: [
             'ID',
+            'UF_CRM_1780724113',
             'CONTACT_ID',
             'CATEGORY_ID',
             'STAGE_ID',
@@ -83,13 +101,14 @@ export function createBitrixAnalyticsClient(cfg: BitrixAnalyticsConfig): BitrixA
           deals.push({
             portalId: cfg.portalId,
             dealId: canonicalId(row.ID, 'deal'),
+            sourceDealId: canonicalId(row.UF_CRM_1780724113, 'source deal'),
             contactId: row.CONTACT_ID == null || row.CONTACT_ID === ''
               ? null
               : canonicalId(row.CONTACT_ID, 'contact'),
             categoryId: String(row.CATEGORY_ID ?? '0'),
             stageId: String(row.STAGE_ID ?? ''),
-            createdAt: String(row.DATE_CREATE ?? ''),
-            modifiedAt: String(row.DATE_MODIFY ?? ''),
+            createdAt: canonicalTimestamp(row.DATE_CREATE, 'DATE_CREATE'),
+            modifiedAt: canonicalTimestamp(row.DATE_MODIFY, 'DATE_MODIFY'),
             opportunity: nullableString(row.OPPORTUNITY),
             currencyId: nullableString(row.CURRENCY_ID),
             ymClientId: nullableString(row.UF_CRM_VELOCE_YM_CLIENT_ID),
@@ -119,7 +138,7 @@ export function createBitrixAnalyticsClient(cfg: BitrixAnalyticsConfig): BitrixA
           id: canonicalId(row.ID, 'stage history'),
           categoryId: String(row.CATEGORY_ID ?? '0'),
           stageId: String(row.STAGE_ID ?? ''),
-          createdAt: String(row.CREATED_TIME ?? ''),
+          createdAt: canonicalTimestamp(row.CREATED_TIME, 'CREATED_TIME'),
         })));
         if (envelope.next == null) break;
         start = envelope.next;
