@@ -1,82 +1,89 @@
 # veloce-concierge
 
-AI-консьерж студии Veloce — Telegram + МАКС + Mini App + GigaChat + Битрикс24.
+Production monorepo Veloce: shared Caddy/infra, lead intake API, Bitrix24 integrations, offline analytics, Telegram/МАХ bot components and supporting applications.
 
-Монорепо. Сервисы оркеструются через `docker-compose.yml` в корне.
+## Source of truth
 
-## Структура
+- Repository: `veloce-team/veloce-concierge`.
+- Production host alias: `timeweb-cm`.
+- Current project overview: Basic Memory `05-projects/veloce24/01-context/veloce24 — текущая карта сайта и документации`.
+- Operational task state: Hermes Kanban board `veloce24`.
+- Secrets: GitHub Actions/VPS env only; never Git, README or Basic Memory.
 
-| Папка | Что внутри | Статус |
+## Relevant production components
+
+| Component | Purpose | Runtime |
 |---|---|---|
-| `bot/`         | Concierge-бот (TS, grammy, Hono, SQLite). Блок 2а. | в работе |
-| `ai-service/`  | Сервис генерации AI-смет на GigaChat. Этап 3.       | not started |
-| `mini-app/`    | Telegram Mini App + витрина-портфолио. Этап 5.       | not started |
-| `infra/caddy/` | Caddyfile + сниппет reverse-proxy для Concierge.     | боевой |
-| `branding/`    | Логотипы, аватары, OG-изображения, палитра.          | актуально |
-| `data/`        | Docker volume под SQLite и persistent state.         | пусто, монтируется |
+| `web/` | strict lead API, CRM delivery, SQLite/outbox, Bitrix24→Yandex offline analytics | `veloce-concierge-web` on TimeWeb |
+| `infra/caddy/` | shared production front door for site/API and approved app routes | `veloce-caddy` on TimeWeb |
+| `bot/` | Telegram/МАХ Concierge bot | separate bot contour; see `bot/README.md` |
+| `waba-pulse/` | WABA pulse tooling | see package README |
+| `mini-app/`, `ai-service/` | supporting/prototype packages | not the public site runtime |
 
-## Деплой на VPS
+The public Astro source lives in the separate repository `AlexBurkovRus/veloce`. Caddy serves its immutable release through `/opt/veloce-team/current`; the removed legacy `/opt/veloce-site` is not a rollback path.
 
-VPS уже настроен (Этап 1 закрыт 12.05.2026): Docker, Caddy, HTTPS на 5 поддоменах,
-сеть `veloce-net` создана как external.
+## Public endpoints
 
-```bash
-# на VPS, из корня репо:
-git pull
-cd bot && cp .env.example .env  # первый раз — заполнить значения
-cd ..
+| Endpoint | Contract |
+|---|---|
+| `https://veloce.team/` | Astro production site |
+| `POST https://api.veloce.team/api/lead/v1` | current strict veloce.team form contract |
+| `POST https://api.veloce.team/api/lead` | compatibility route; not the current site contract |
+| `GET https://api.veloce.team/health` | process liveness |
+| `GET https://api.veloce.team/ready` | bounded operational readiness, including offline analytics |
 
-# первый запуск или сборка после правок bot/:
-docker compose up -d --build concierge-bot
-
-# рестарт Caddy при правке Caddyfile:
-docker compose restart caddy
-
-# регистрация webhook'а в TG (в проде — curl, см. bot/README.md «Регистрация webhook'а»):
-set -a; . ./bot/.env; set +a
-curl -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/setWebhook" \
-  -d "url=${PUBLIC_URL%/}/webhook/tg" \
-  -d "secret_token=${TG_WEBHOOK_SECRET}"
-```
+See [`web/README.md`](web/README.md) for API behavior and [`web/docs/offline-analytics-contract-v1.md`](web/docs/offline-analytics-contract-v1.md) for the executable analytics contract.
 
 ## Production deployment
 
-Боевая инфра разнесена по двум VPS:
+`web` and Caddy changes use `.github/workflows/web-ci-deploy.yml`:
 
-| Домены | Локация | Compose-файл |
-|---|---|---|
-| `veloce.team`, `www.veloce.team`, `api.veloce.team`, `app.veloce.team` | Moscow VPS (`200.165.229.107`) | `docker-compose.yml` + `infra/caddy/Caddyfile` |
-| `bot.veloce.team` (Telegram-бот) | Helsinki VPS (`193.29.225.31`) | `docker-compose.aeza.yml` + `infra/caddy/Caddyfile.aeza` |
-
-TG-бот вынесен в Helsinki по причине регионально-специфичной связности Telegram Bot API; остальные сервисы остаются в Москве. Окружения изолированы — у каждого свой `veloce-net` (external), общего состояния нет.
-
-Статика `veloce.team` обслуживается Caddy file-server'ом из `/opt/veloce-site` на Moscow VPS — это отдельный приватный репо [`AlexBurkovRus/veloce`](https://github.com/AlexBurkovRus/veloce), смонтированный в контейнер caddy как read-only bind (`/opt/veloce-site:/srv/veloce-site:ro`). Подробности (deploy key, ssh-config) — `CLAUDE.md` §5.
-
-Деплой на Helsinki:
-```bash
-docker compose -f docker-compose.aeza.yml up -d --build
+```text
+branch from clean origin/main
+→ web tests/typecheck/build
+→ PR CI without deploy
+→ explicit merge gate
+→ immutable /opt/veloce-concierge/releases/<sha>
+→ Caddy validation
+→ SQLite backup + migration rehearsal + rollback smoke
+→ atomic current switch and container promotion
+→ schema/integrity/ready/public smoke
 ```
 
-## Эндпоинты
+Do not deploy Concierge with manual `git pull`, manual image replacement or direct production SQLite edits. Caddy is a shared front door; Caddy/compose changes require source review and pipeline validation.
 
-| URL | Доступ | Назначение |
-|---|---|---|
-| `https://bot.veloce.team/webhook/tg` | публично (Helsinki) | приём апдейтов от Telegram |
-| `https://bot.veloce.team/health` | публично (Helsinki) | liveness, минимальный `{status, uptime_s}` |
-| `concierge-bot:3000/metrics` | только внутри `veloce-net` | счётчики диалогов, лидов, outbox |
+Production layout:
 
-## Сеть
-
-Контейнеры подключены к external-сети `veloce-net`. Создаётся однократно на VPS:
-
-```bash
-docker network create veloce-net
+```text
+/opt/veloce-concierge/releases/<sha>
+/opt/veloce-concierge/current -> releases/<sha>
+/opt/veloce-concierge/web/.env          # shared secret env, mode 0600
+Docker volume /data/web.sqlite           # runtime state
 ```
 
-## Локальная разработка бота
+## Local web development
 
-См. `bot/README.md`.
+```bash
+cd web
+cp .env.example .env
+npm ci
+npm test
+npm run typecheck
+npm run build
+```
 
-## Лицензия
+Required secrets are documented only by variable name in `web/.env.example` and source contracts.
+
+## Offline analytics status
+
+The worker is production-enabled and uses canonical copied-deal lineage via `UF_CRM_1780724113` (`ID исходной сделки`). It maintains one logical order per root/source deal, updates revenue after `FINAL_INVOICE`, emits `won_deal` at `WON`, suppresses excluded categories and stores no PII in analytics state/outbox/CSV.
+
+On 2026-09-02 the controlled live form→CRM→copied lineage→Yandex qualified/revenue/won E2E passed. External `/ready` monitoring with Telegram `DOWN → RECOVERY` acceptance is active. Technical chain: **GO**; paid traffic: separate owner-approved launch gate.
+
+## Domain policy
+
+`veloce.team` is reserved for the public site and strictly necessary production endpoints. Prototype/internal hosts belong under `maxbot-pro.ru`; do not create experimental `veloce.team` subdomains.
+
+## License
 
 UNLICENSED — internal, see `LICENSE`.

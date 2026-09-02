@@ -1,9 +1,10 @@
 # concierge-web
 
-Веб-микросервис для приёма заявок с двух сайтов:
-- **veloce.team** → `POST /api/lead` (source=`veloce_site`, SOURCE_ID=`VELOCE_SITE`).
-- **veloce.team Analytics Contract v1** → `POST /api/lead/v1` (strict payload,
+Веб-микросервис для приёма заявок и production offline analytics:
+- **veloce.team** → текущий strict `POST /api/lead/v1` (Analytics Contract v1,
   durable `lead_event_id`, успешный ответ только после подтверждения Сделки в CRM).
+- `POST /api/lead` сохранён как compatibility route для `source=veloce_site`, но не является
+  текущим контрактом публичной формы veloce.team.
 - **maxbot-pro.ru** (max-microsite, master_source — vault `06-projects/max-microsite/`) → `POST /api/lead/maxbot` (source=`maxbot_pro`, SOURCE_ID=`MAXBOT_PRO`).
 
 Сегрегация route'ов через `expectedSource` в `createLeadHandler` — payload на «не свой» route отбивается 400 'unexpected source for this route'.
@@ -35,6 +36,9 @@ npm run typecheck
 - `POST /api/lead/maxbot` — приём заявки c maxbot-pro.ru (та же schema +
   опциональные `landing`/`intent`/`product` для контекста гос-посадочной).
 - `GET /health` — статус + uptime.
+- `GET /ready` — bounded operational readiness без PII/секретов. Возвращает `503` при
+  stale/failing analytics workers, retry/dead/unmatchable rows, backlog/quota либо
+  semantic/lineage alert; внешний Uptime Kuma проверяет этот endpoint отдельно от liveness.
 
 ## Доставка в Б24
 
@@ -94,3 +98,15 @@ npm start
 Сначала миграция репетируется на SQLite Backup API snapshot. Worker активируется
 только после создания CRM-целей и установки `BITRIX24_PORTAL_ID`,
 `YANDEX_METRIKA_COUNTER_ID`, `YANDEX_OAUTH_TOKEN`.
+
+## Production status
+
+На 2026-09-02 worker production-enabled. Controlled live E2E подтвердил strict form
+attribution, copied-deal lineage, один deterministic root order, `qualified_lead`,
+`FINAL_INVOICE` revenue и `won_deal`; все три Yandex upload read-back получили
+`api_validation_status=PASSED`. Test CRM objects удалены по identity guard, immutable
+analytics evidence сохранено. Технический контур — **GO**; paid traffic остаётся
+отдельным owner-approved launch gate.
+
+Каноническая карта текущего source/live-состояния:
+Basic Memory `05-projects/veloce24/01-context/veloce24 — текущая карта сайта и документации`.
