@@ -9,6 +9,7 @@ import {
 const baseDeal: AnalyticsDeal = {
   portalId: 'portal-1',
   dealId: '42',
+  sourceDealId: '42',
   contactId: '7',
   categoryId: '0',
   stageId: 'NEW',
@@ -90,6 +91,44 @@ describe('offline analytics semantic contract', () => {
       prior({ qualifiedAt: '2026-09-01T10:00:00Z' }),
     );
     expect(transition.events).toEqual([]);
+    expect(transition.order).toBeNull();
+    expect(transition.suppressDelivery).toBe(true);
+  });
+
+  it('fails closed when the newest lineage descendant has an unknown category', () => {
+    const transition = deriveAnalyticsTransition(
+      { ...baseDeal, categoryId: '99', stageId: 'C99:NEW' },
+      history(
+        ['0', 'NEW', '2026-09-01T09:00:00Z'],
+        ['6', 'C6:NEW', '2026-09-01T10:00:00Z'],
+        ['99', 'C99:NEW', '2026-09-02T10:00:00Z'],
+      ),
+      prior({ qualifiedAt: '2026-09-01T10:00:00Z', lastPayloadHash: 'old' }),
+    );
+
+    expect(transition.order).toBeNull();
+    expect(transition.suppressDelivery).toBe(true);
+    expect(transition.alerts).toContain('unknown_category:99');
+  });
+
+  it.each(['10', '12', '99'])('clears stale mutable status when authoritative current category %s suppresses delivery', (categoryId) => {
+    const rows = history(['0', 'NEW', '2026-09-01T09:00:00Z']);
+    const transition = deriveAnalyticsTransition(
+      { ...baseDeal, categoryId, stageId: `C${categoryId}:NEW` },
+      rows,
+      prior({
+        qualifiedAt: '2026-09-01T10:00:00Z',
+        signedAt: '2026-09-02T10:00:00Z', signedRevenue: '150000', signedCurrency: 'RUB',
+        wonAt: '2026-09-03T10:00:00Z', cancelledAt: '2026-09-04T10:00:00Z',
+      }),
+      rows,
+      true,
+    );
+
+    expect(transition.nextState).toMatchObject({
+      qualifiedAt: '2026-09-01T10:00:00Z',
+      signedAt: null, signedRevenue: null, signedCurrency: null, wonAt: null, cancelledAt: null,
+    });
     expect(transition.order).toBeNull();
     expect(transition.suppressDelivery).toBe(true);
   });

@@ -5,6 +5,7 @@ export const EXCLUDED_CATEGORY_IDS = new Set(['10', '12']);
 export type AnalyticsDeal = {
   portalId: string;
   dealId: string;
+  sourceDealId: string;
   contactId: string | null;
   categoryId: string;
   stageId: string;
@@ -109,25 +110,54 @@ export function deriveAnalyticsTransition(
   deal: AnalyticsDeal,
   history: AnalyticsHistoryItem[],
   previous: AnalyticsState,
+  qualificationHistory: AnalyticsHistoryItem[] = history,
+  statusHistoryIsAuthoritative = false,
 ): AnalyticsTransition {
   const alerts: string[] = [];
   const events: AnalyticsEvent[] = [];
+  const suppressedState = statusHistoryIsAuthoritative
+    ? {
+        ...previous,
+        portalId: deal.portalId,
+        dealId: deal.dealId,
+        signedAt: null,
+        signedRevenue: null,
+        signedCurrency: null,
+        wonAt: null,
+        cancelledAt: null,
+      }
+    : { ...previous, portalId: deal.portalId, dealId: deal.dealId };
   if (EXCLUDED_CATEGORY_IDS.has(deal.categoryId)) {
     return {
-      nextState: { ...previous, portalId: deal.portalId, dealId: deal.dealId },
+      nextState: suppressedState,
       events,
       order: null,
       suppressDelivery: true,
       alerts,
     };
   }
-  const qualifiedAt = previous.qualifiedAt ?? firstQualifiedAt(history);
-  const signedAt = previous.signedAt ?? firstStageAt(history, signedStages());
-  const wonAt = previous.wonAt ?? firstStageAt(history, wonStages());
-  const cancelledAt =
-    previous.cancelledAt ??
-    ordered(history).find((item) => isCancelledStage(item.stageId))?.createdAt ??
-    null;
+  if (deal.categoryId !== '0' && !WORKING_CATEGORY_IDS.has(deal.categoryId)) {
+    alerts.push(`unknown_category:${deal.categoryId}`);
+    return {
+      nextState: suppressedState,
+      events,
+      order: null,
+      suppressDelivery: true,
+      alerts,
+    };
+  }
+  const qualifiedAt = previous.qualifiedAt ?? firstQualifiedAt(qualificationHistory);
+  const signedAt = statusHistoryIsAuthoritative
+    ? firstStageAt(history, signedStages())
+    : previous.signedAt ?? firstStageAt(history, signedStages());
+  const wonAt = statusHistoryIsAuthoritative
+    ? firstStageAt(history, wonStages())
+    : previous.wonAt ?? firstStageAt(history, wonStages());
+  const historyCancelledAt =
+    ordered(history).find((item) => isCancelledStage(item.stageId))?.createdAt ?? null;
+  const cancelledAt = statusHistoryIsAuthoritative
+    ? historyCancelledAt
+    : previous.cancelledAt ?? historyCancelledAt;
 
   if (!previous.qualifiedAt && qualifiedAt) {
     events.push({
@@ -150,8 +180,8 @@ export function deriveAnalyticsTransition(
     dealId: deal.dealId,
     qualifiedAt,
     signedAt,
-    signedRevenue: previous.signedRevenue,
-    signedCurrency: previous.signedCurrency,
+    signedRevenue: statusHistoryIsAuthoritative ? null : previous.signedRevenue,
+    signedCurrency: statusHistoryIsAuthoritative ? null : previous.signedCurrency,
     wonAt,
     cancelledAt,
   };
@@ -162,13 +192,6 @@ export function deriveAnalyticsTransition(
   }
 
   if (!qualifiedAt) {
-    if (
-      deal.categoryId !== '0' &&
-      !EXCLUDED_CATEGORY_IDS.has(deal.categoryId) &&
-      !WORKING_CATEGORY_IDS.has(deal.categoryId)
-    ) {
-      alerts.push(`unknown_category:${deal.categoryId}`);
-    }
     return { nextState, events: [], order: null, suppressDelivery: false, alerts };
   }
 

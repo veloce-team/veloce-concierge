@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const MIGRATIONS_DIRNAME = 'migrations';
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 const REQUIRED_SCHEMA: Array<[string, string[]]> = [
   ['crm_deal_state', ['portal_id', 'deal_id', 'category_id', 'stage_id', 'modified_at', 'qualified_at', 'signed_at', 'signed_revenue', 'signed_currency', 'won_at', 'cancelled_at', 'last_payload_hash', 'payload_revision', 'updated_at']],

@@ -1,7 +1,11 @@
 import type { Logger } from 'pino';
 import type { BitrixAnalyticsClient } from './bitrix.js';
 import type { AnalyticsRepository, YandexOutboxRecord } from './repository.js';
-import { deriveAnalyticsTransition } from './semantic.js';
+import {
+  deriveAnalyticsTransition,
+  type AnalyticsDeal,
+  type AnalyticsHistoryItem,
+} from './semantic.js';
 import { YandexApiError, type YandexSimpleOrdersClient } from './yandex.js';
 
 const DAY_MS = 86_400_000;
@@ -43,6 +47,20 @@ export type AnalyticsWorkerDeps = {
   reconcileIntervalMs?: number;
   outboxAlertThreshold?: number;
 };
+
+function newestDeal(deals: AnalyticsDeal[]): AnalyticsDeal {
+  return [...deals].sort((a, b) => {
+    const byCreated = Date.parse(b.createdAt) - Date.parse(a.createdAt);
+    if (byCreated !== 0) return byCreated;
+    const byModified = Date.parse(b.modifiedAt) - Date.parse(a.modifiedAt);
+    if (byModified !== 0) return byModified;
+    return b.dealId.localeCompare(a.dealId, undefined, { numeric: true });
+  })[0]!;
+}
+
+function currentLineageDeal(deals: AnalyticsDeal[]): AnalyticsDeal {
+  return newestDeal(deals);
+}
 
 export function createAnalyticsWorker(deps: AnalyticsWorkerDeps): AnalyticsWorker {
   const now = deps.now ?? (() => Date.now());
@@ -90,26 +108,103 @@ export function createAnalyticsWorker(deps: AnalyticsWorkerDeps): AnalyticsWorke
     pollRunning = true;
     try {
       const deals = await deps.bitrix.listTrackedDeals();
+      const lineages = new Map<string, AnalyticsDeal[]>();
       for (const deal of deals) {
-        try {
-          const history = await deps.bitrix.getStageHistory(deal.dealId);
+        const key = `${deal.portalId}\u0000${deal.sourceDealId}`;
+        const lineage = lineages.get(key) ?? [];
+        lineage.push(deal);
+        lineages.set(key, lineage);
+      }
+      for (const lineage of lineages.values()) {
+        const sourceDealId = lineage[0]!.sourceDealId;
+        const root = lineage.find((member) => member.dealId === sourceDealId);
+        if (!root) {
+          deps.logger.error(
+            { deal_id: sourceDealId, physical_deal_ids: lineage.map((member) => member.dealId) },
+            'analytics: lineage root missing',
+          );
+          const physicalDeal = currentLineageDeal(lineage);
+          const deal: AnalyticsDeal = { ...physicalDeal, dealId: sourceDealId };
           const previous = deps.repository.getState(deal.portalId, deal.dealId);
-          const transition = deriveAnalyticsTransition(deal, history, previous);
+          deps.repository.applyTransition(deal, {
+            nextState: previous,
+            events: [],
+            order: null,
+            suppressDelivery: true,
+            alerts: ['lineage_root_missing'],
+          });
+          continue;
+        }
+        const physicalDeal = currentLineageDeal(lineage);
+        const deal: AnalyticsDeal = { ...physicalDeal, dealId: physicalDeal.sourceDealId };
+        try {
+          const currentHistory: AnalyticsHistoryItem[] = [];
+          const qualificationHistory: AnalyticsHistoryItem[] = [];
+          let rootHasQualificationHistory = false;
+          for (const member of lineage) {
+            const memberHistory = await deps.bitrix.getStageHistory(member.dealId);
+            if (member.dealId === physicalDeal.dealId) currentHistory.push(...memberHistory);
+            if (member.dealId === root.dealId) {
+              const rootHistory = memberHistory.filter((item) => item.categoryId === '0');
+              qualificationHistory.push(...rootHistory);
+              if (rootHistory.length > 0) rootHasQualificationHistory = true;
+            } else {
+              qualificationHistory.push(
+                ...memberHistory.filter((item) => ['2', '4', '6'].includes(item.categoryId)),
+              );
+            }
+          }
+          if (!rootHasQualificationHistory) {
+            deps.logger.error(
+              { deal_id: sourceDealId },
+              'analytics: lineage root has no qualification history',
+            );
+            const previous = deps.repository.getState(deal.portalId, deal.dealId);
+            deps.repository.applyTransition(deal, {
+              nextState: previous,
+              events: [],
+              order: null,
+              suppressDelivery: true,
+              alerts: ['lineage_root_has_no_category_0_history'],
+            });
+            continue;
+          }
+          const previous = deps.repository.getState(deal.portalId, deal.dealId);
+          const transition = deriveAnalyticsTransition(
+            deal,
+            currentHistory,
+            previous,
+            qualificationHistory,
+            true,
+          );
           const result = deps.repository.applyTransition(deal, transition);
           if (transition.alerts.length > 0) {
             deps.logger.warn(
-              { portal_id: deal.portalId, deal_id: deal.dealId, alerts: transition.alerts },
+              {
+                portal_id: deal.portalId,
+                deal_id: deal.dealId,
+                physical_deal_id: physicalDeal.dealId,
+                alerts: transition.alerts,
+              },
               'analytics: semantic alerts',
             );
           }
           if (result.eventCount > 0 || result.outboxCreated) {
             deps.logger.info(
-              { portal_id: deal.portalId, deal_id: deal.dealId, ...result },
+              {
+                portal_id: deal.portalId,
+                deal_id: deal.dealId,
+                physical_deal_id: physicalDeal.dealId,
+                ...result,
+              },
               'analytics: transition persisted',
             );
           }
         } catch (error) {
-          deps.logger.error({ ...safeError(error), deal_id: deal.dealId }, 'analytics: deal poll failed');
+          deps.logger.error(
+            { ...safeError(error), deal_id: deal.dealId, physical_deal_id: physicalDeal.dealId },
+            'analytics: deal poll failed',
+          );
         }
       }
     } finally {

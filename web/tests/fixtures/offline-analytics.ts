@@ -14,6 +14,7 @@ export function analyticsDeal(overrides: Partial<AnalyticsDeal> = {}): Analytics
   return {
     portalId: 'portal-1',
     dealId: '42',
+    sourceDealId: '42',
     contactId: '7',
     categoryId: '2',
     stageId: 'C2:NEW',

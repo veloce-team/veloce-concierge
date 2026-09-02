@@ -21,7 +21,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 function migratedDb(): Database.Database {
   const db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
-  for (const migration of ['001-init.sql', '002-lead-event-id.sql', '003-offline-analytics.sql']) {
+  for (const migration of [
+    '001-init.sql', '002-lead-event-id.sql', '003-offline-analytics.sql', '004-lineage-root.sql',
+  ]) {
     db.exec(readFileSync(join(HERE, '..', 'src/services/sessions/migrations', migration), 'utf8'));
   }
   return db;
