@@ -38,7 +38,10 @@ const EnvSchema = z
     ANALYTICS_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(300_000),
     ANALYTICS_UPLOAD_INTERVAL_MS: z.coerce.number().int().positive().default(30_000),
     ANALYTICS_RECONCILE_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
-    ANALYTICS_OUTBOX_ALERT_THRESHOLD: z.coerce.number().int().positive().default(100),
+    ANALYTICS_OUTBOX_ALERT_THRESHOLD: z.coerce.number().int().positive().default(5),
+    ANALYTICS_POLL_STALE_AFTER_MS: z.coerce.number().int().positive().default(900_000),
+    ANALYTICS_UPLOAD_STALE_AFTER_MS: z.coerce.number().int().positive().default(300_000),
+    ANALYTICS_RECONCILE_STALE_AFTER_MS: z.coerce.number().int().positive().default(600_000),
     YANDEX_METRIKA_COUNTER_ID: z.coerce.number().int().positive().optional(),
     YANDEX_OAUTH_TOKEN: z.string().min(1).optional(),
 

@@ -29,6 +29,27 @@ describe('analytics runtime bootstrap', () => {
     expect(createAnalyticsRuntime(parseEnv(base), db(), pino({ enabled: false }))).toBeNull();
   });
 
+  it('wires operational limits from environment into the worker health contract', () => {
+    const env = parseEnv({
+      ...base,
+      ANALYTICS_ENABLED: 'true',
+      BITRIX24_PORTAL_ID: 'member-1',
+      YANDEX_METRIKA_COUNTER_ID: '109782828',
+      YANDEX_OAUTH_TOKEN: 'secret-token',
+      ANALYTICS_OUTBOX_ALERT_THRESHOLD: '7',
+      ANALYTICS_POLL_STALE_AFTER_MS: '901000',
+      ANALYTICS_UPLOAD_STALE_AFTER_MS: '301000',
+      ANALYTICS_RECONCILE_STALE_AFTER_MS: '601000',
+    });
+    const worker = createAnalyticsRuntime(env, db(), pino({ enabled: false }));
+    expect(worker?.health()).toMatchObject({
+      limits: {
+        outboxAlertThreshold: 7,
+        staleAfterMs: { poll: 901_000, upload: 301_000, reconcile: 601_000 },
+      },
+    });
+  });
+
   it('constructs the worker only from a complete enabled environment', () => {
     const env = parseEnv({
       ...base,

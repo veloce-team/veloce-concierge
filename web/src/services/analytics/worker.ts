@@ -34,6 +34,16 @@ export type AnalyticsWorkerHealth = {
   running: Record<AnalyticsStage, boolean>;
   lastSuccessAt: Record<AnalyticsStage, number | null>;
   lastFailureAt: Record<AnalyticsStage, number | null>;
+  issues: string[];
+  outbox: {
+    counts: Record<string, number>;
+    deliverableBacklog: number;
+    terminal: number;
+  };
+  limits: {
+    outboxAlertThreshold: number;
+    staleAfterMs: Record<AnalyticsStage, number>;
+  };
 };
 
 export type AnalyticsWorkerDeps = {
@@ -46,6 +56,9 @@ export type AnalyticsWorkerDeps = {
   uploadIntervalMs?: number;
   reconcileIntervalMs?: number;
   outboxAlertThreshold?: number;
+  pollStaleAfterMs?: number;
+  uploadStaleAfterMs?: number;
+  reconcileStaleAfterMs?: number;
 };
 
 function newestDeal(deals: AnalyticsDeal[]): AnalyticsDeal {
@@ -62,6 +75,18 @@ function currentLineageDeal(deals: AnalyticsDeal[]): AnalyticsDeal {
   return newestDeal(deals);
 }
 
+function publicSemanticIssue(alert: string): string {
+  if (alert.startsWith('unknown_category:')) return 'semantic:unknown_category';
+  switch (alert) {
+    case 'missing_ym_client_id':
+    case 'invalid_current_contract_value':
+    case 'won_without_signing_stage':
+      return `semantic:${alert}`;
+    default:
+      return 'semantic:unclassified';
+  }
+}
+
 export function createAnalyticsWorker(deps: AnalyticsWorkerDeps): AnalyticsWorker {
   const now = deps.now ?? (() => Date.now());
   const timers: Array<ReturnType<typeof setInterval>> = [];
@@ -71,12 +96,19 @@ export function createAnalyticsWorker(deps: AnalyticsWorkerDeps): AnalyticsWorke
   let reconcileRunning = false;
   let started = false;
   let stopping = false;
+  let semanticIssues: string[] = [];
+  let quotaExhausted = false;
   const lastSuccessAt: Record<AnalyticsStage, number | null> = {
     poll: null,
     upload: null,
     reconcile: null,
   };
   const lastFailureAt: Record<AnalyticsStage, number | null> = {
+    poll: null,
+    upload: null,
+    reconcile: null,
+  };
+  const lastOutcome: Record<AnalyticsStage, 'success' | 'failure' | null> = {
     poll: null,
     upload: null,
     reconcile: null,
@@ -91,9 +123,11 @@ export function createAnalyticsWorker(deps: AnalyticsWorkerDeps): AnalyticsWorke
     const promise = operation().then(
       () => {
         lastSuccessAt[stage] = now();
+        lastOutcome[stage] = 'success';
       },
       (error: unknown) => {
         lastFailureAt[stage] = now();
+        lastOutcome[stage] = 'failure';
         throw error;
       },
     );
@@ -106,6 +140,7 @@ export function createAnalyticsWorker(deps: AnalyticsWorkerDeps): AnalyticsWorke
   async function runPoll(): Promise<void> {
     if (pollRunning) return;
     pollRunning = true;
+    const nextSemanticIssues = new Set<string>();
     try {
       const deals = await deps.bitrix.listTrackedDeals();
       const lineages = new Map<string, AnalyticsDeal[]>();
@@ -119,6 +154,7 @@ export function createAnalyticsWorker(deps: AnalyticsWorkerDeps): AnalyticsWorke
         const sourceDealId = lineage[0]!.sourceDealId;
         const root = lineage.find((member) => member.dealId === sourceDealId);
         if (!root) {
+          nextSemanticIssues.add('semantic:lineage_root_missing');
           deps.logger.error(
             { deal_id: sourceDealId, physical_deal_ids: lineage.map((member) => member.dealId) },
             'analytics: lineage root missing',
@@ -155,6 +191,7 @@ export function createAnalyticsWorker(deps: AnalyticsWorkerDeps): AnalyticsWorke
             }
           }
           if (!rootHasQualificationHistory) {
+            nextSemanticIssues.add('semantic:lineage_root_has_no_category_0_history');
             deps.logger.error(
               { deal_id: sourceDealId },
               'analytics: lineage root has no qualification history',
@@ -179,6 +216,7 @@ export function createAnalyticsWorker(deps: AnalyticsWorkerDeps): AnalyticsWorke
           );
           const result = deps.repository.applyTransition(deal, transition);
           if (transition.alerts.length > 0) {
+            for (const alert of transition.alerts) nextSemanticIssues.add(publicSemanticIssue(alert));
             deps.logger.warn(
               {
                 portal_id: deal.portalId,
@@ -201,12 +239,14 @@ export function createAnalyticsWorker(deps: AnalyticsWorkerDeps): AnalyticsWorke
             );
           }
         } catch (error) {
+          nextSemanticIssues.add('semantic:deal_poll_failed');
           deps.logger.error(
             { ...safeError(error), deal_id: deal.dealId, physical_deal_id: physicalDeal.dealId },
             'analytics: deal poll failed',
           );
         }
       }
+      semanticIssues = [...nextSemanticIssues].sort();
     } finally {
       pollRunning = false;
     }
@@ -243,6 +283,7 @@ export function createAnalyticsWorker(deps: AnalyticsWorkerDeps): AnalyticsWorke
   async function runUpload(): Promise<void> {
     if (uploadRunning) return;
     uploadRunning = true;
+    let quotaExhaustedThisTick = false;
     try {
       const current = now();
       const records = deps.repository.claimDue(current, MAX_UPLOADS_PER_TICK);
@@ -273,6 +314,7 @@ export function createAnalyticsWorker(deps: AnalyticsWorkerDeps): AnalyticsWorke
         } catch (error) {
           const retryable = error instanceof YandexApiError ? error.retryable : true;
           if (error instanceof YandexApiError && (error.status === 420 || error.status === 429)) {
+            quotaExhaustedThisTick = true;
             deps.logger.warn(
               { outbox_id: record.id, status: error.status },
               'analytics: Yandex quota exhausted',
@@ -287,6 +329,7 @@ export function createAnalyticsWorker(deps: AnalyticsWorkerDeps): AnalyticsWorke
         }
       }
       emitOutboxAlert();
+      quotaExhausted = quotaExhaustedThisTick;
     } finally {
       uploadRunning = false;
     }
@@ -369,14 +412,17 @@ export function createAnalyticsWorker(deps: AnalyticsWorkerDeps): AnalyticsWorke
   }
 
   function tickPoll(): Promise<void> {
+    if (pollRunning) return Promise.resolve();
     return track('poll', runPoll);
   }
 
   function tickUpload(): Promise<void> {
+    if (uploadRunning) return Promise.resolve();
     return track('upload', runUpload);
   }
 
   function tickReconcile(): Promise<void> {
+    if (reconcileRunning) return Promise.resolve();
     return track('reconcile', runReconcile);
   }
 
@@ -415,14 +461,52 @@ export function createAnalyticsWorker(deps: AnalyticsWorkerDeps): AnalyticsWorke
       stopping = false;
     },
     health() {
+      const current = now();
+      const staleAfter: Record<AnalyticsStage, number> = {
+        poll: deps.pollStaleAfterMs ?? 900_000,
+        upload: deps.uploadStaleAfterMs ?? 300_000,
+        reconcile: deps.reconcileStaleAfterMs ?? 600_000,
+      };
+      const issues = (Object.keys(lastSuccessAt) as AnalyticsStage[])
+        .filter((stage) => {
+          const success = lastSuccessAt[stage];
+          return success != null && current - success > staleAfter[stage];
+        })
+        .map((stage) => `stale:${stage}`);
+      for (const stage of Object.keys(lastFailureAt) as AnalyticsStage[]) {
+        if (lastOutcome[stage] === 'failure') issues.push(`failed:${stage}`);
+      }
+      let counts: Record<string, number> = {};
+      try {
+        counts = deps.repository.countByStatus();
+      } catch {
+        issues.push('outbox:snapshot_failed');
+      }
+      const deliverableBacklog =
+        (counts.dirty ?? 0) +
+        (counts.retry ?? 0) +
+        (counts.sending ?? 0) +
+        (counts.accepted ?? 0);
+      const terminal = (counts.dead ?? 0) + (counts.unmatchable ?? 0);
+      if ((counts.retry ?? 0) > 0) issues.push('outbox:retry');
+      if (terminal > 0) issues.push('outbox:terminal');
+      if (deliverableBacklog >= (deps.outboxAlertThreshold ?? 5)) issues.push('outbox:backlog');
+      if (quotaExhausted) issues.push('provider:quota_exhausted');
+      issues.push(...semanticIssues);
       return {
         enabled: true,
         started,
         stopping,
-        ready: Object.values(lastSuccessAt).every((value) => value != null),
+        ready: Object.values(lastSuccessAt).every((value) => value != null) && issues.length === 0,
         running: { poll: pollRunning, upload: uploadRunning, reconcile: reconcileRunning },
         lastSuccessAt: { ...lastSuccessAt },
         lastFailureAt: { ...lastFailureAt },
+        issues,
+        outbox: { counts, deliverableBacklog, terminal },
+        limits: {
+          outboxAlertThreshold: deps.outboxAlertThreshold ?? 5,
+          staleAfterMs: staleAfter,
+        },
       };
     },
   };

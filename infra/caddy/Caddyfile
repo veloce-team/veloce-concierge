@@ -1,5 +1,5 @@
 api.veloce.team {
-	@web path /api/lead* /health
+	@web path /api/lead* /health /ready
 	handle @web {
 		reverse_proxy concierge-web:3000
 	}
