@@ -109,11 +109,64 @@ describe('stateful deploy workflow safety contract', () => {
     expect(rollbackBody).not.toContain('|| printf false');
   });
 
-  it('waits for internal application readiness and gives managed shutdown enough time to drain', () => {
+  it('deploys the public readiness proxy through the pipeline with Caddy rollback', () => {
     expect(workflow).toContain(
-      'docker exec veloce-concierge-web wget -qO- http://127.0.0.1:3000/ready',
+      'source: "docker-compose.yml,infra/caddy/Caddyfile,web/package.json,web/package-lock.json,web/tsconfig.json,web/Dockerfile,web/src/**"',
     );
-    expect(workflow).not.toContain('https://api.veloce.team/ready');
+    const validate = workflow.indexOf('caddy validate --config /candidate/Caddyfile');
+    const appRollbackTrap = workflow.indexOf('trap rollback EXIT');
+    const backup = workflow.indexOf('cp "$BASE/infra/caddy/Caddyfile" "$BACKUPS/Caddyfile-$SHA"');
+    const swap = workflow.indexOf('mv -Tf "$BASE/infra/caddy/Caddyfile.next" "$BASE/infra/caddy/Caddyfile"');
+    const recreate = workflow.indexOf('up -d --no-deps --force-recreate caddy');
+    const restore = workflow.indexOf('mv -Tf "$BASE/infra/caddy/Caddyfile.rollback" "$BASE/infra/caddy/Caddyfile"');
+    const rollbackRecreate = workflow.indexOf('deploy_caddy rollback', restore);
+    const failedRelease = workflow.indexOf('exit 1', rollbackRecreate);
+    const disarmAppRollback = workflow.indexOf('trap - EXIT', failedRelease);
+    expect(validate).toBeGreaterThan(0);
+    expect(appRollbackTrap).toBeGreaterThan(validate);
+    expect(backup).toBeGreaterThan(appRollbackTrap);
+    expect(swap).toBeGreaterThan(backup);
+    expect(recreate).toBeGreaterThan(swap);
+    expect(restore).toBeGreaterThan(recreate);
+    expect(rollbackRecreate).toBeGreaterThan(restore);
+    expect(failedRelease).toBeGreaterThan(rollbackRecreate);
+    expect(disarmAppRollback).toBeGreaterThan(failedRelease);
+    expect(workflow.slice(recreate, restore)).toContain('if ! deploy_caddy candidate; then');
+    expect(workflow.slice(restore, failedRelease)).not.toContain('||');
+    expect(workflow).toContain('CADDY_UID="$(stat -c %u "$BASE/infra/caddy/Caddyfile")"');
+    expect(workflow).toContain('CADDY_GID="$(stat -c %g "$BASE/infra/caddy/Caddyfile")"');
+    expect(workflow).toContain('CADDY_MODE="$(stat -c %a "$BASE/infra/caddy/Caddyfile")"');
+    expect(workflow).toContain(
+      'install -o "$CADDY_UID" -g "$CADDY_GID" -m "$CADDY_MODE" \\\n              "$RELEASE/infra/caddy/Caddyfile" "$BASE/infra/caddy/Caddyfile.next"',
+    );
+    expect(workflow).toContain(
+      'install -o "$CADDY_UID" -g "$CADDY_GID" -m "$CADDY_MODE" \\\n                "$BACKUPS/Caddyfile-$SHA" "$BASE/infra/caddy/Caddyfile.rollback"',
+    );
+    expect(workflow).toContain("wget -T 15 -qO- https://veloce.team/");
+    expect(workflow).toContain("wget -T 15 -qO- https://api.veloce.team/health");
+    expect(workflow).toContain("wget -T 15 -qO- https://api.veloce.team/ready");
+    expect(workflow).not.toContain('docker exec veloce-caddy caddy reload');
+  });
+
+  it('waits for internal application readiness before public proxy verification and gives shutdown enough time', () => {
+    const internalReady = workflow.indexOf(
+      'timeout 20s docker exec veloce-concierge-web wget -T 15 -qO- http://127.0.0.1:3000/ready',
+    );
+    const publicReady = workflow.indexOf('https://api.veloce.team/ready');
+    expect(internalReady).toBeGreaterThan(0);
+    expect(publicReady).toBeGreaterThan(internalReady);
+    expect(workflow).toContain(
+      'timeout 20s docker exec "$ROLLBACK_SMOKE" wget -T 15 -qO- http://127.0.0.1:3000/health',
+    );
+    expect(workflow).toContain("timeout 20s docker inspect -f '{{.State.Running}}' veloce-caddy");
+    expect(workflow).toContain(
+      'timeout 20s docker exec veloce-caddy caddy validate --config /etc/caddy/Caddyfile',
+    );
+    expect(workflow).toContain(
+      'timeout 120s docker compose -p "$PROJECT" -f "$BASE/docker-compose.yml" up -d --no-deps --force-recreate caddy',
+    );
+    expect(workflow.match(/for attempt in \$\(seq 1 15\)/g)).toHaveLength(2);
+    expect(workflow.match(/for attempt in \$\(seq 1 30\)/g)).toHaveLength(1);
     expect(compose).toContain('stop_grace_period: 35s');
   });
 });
